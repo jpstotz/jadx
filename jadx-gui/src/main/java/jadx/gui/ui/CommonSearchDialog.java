@@ -27,15 +27,12 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingWorker;
 import javax.swing.UIDefaults;
 import javax.swing.UIManager;
+import javax.swing.event.TableModelEvent;
 import javax.swing.table.AbstractTableModel;
 import javax.swing.table.TableCellRenderer;
 import javax.swing.table.TableColumn;
 import javax.swing.table.TableColumnModel;
-import java.awt.Color;
-import java.awt.Component;
-import java.awt.Cursor;
-import java.awt.Dimension;
-import java.awt.Font;
+import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyAdapter;
@@ -61,7 +58,7 @@ public abstract class CommonSearchDialog extends JDialog {
 	private static final Logger LOG = LoggerFactory.getLogger(CommonSearchDialog.class);
 	private static final long serialVersionUID = 8939332306115370276L;
 
-	public static final int MAX_RESULTS_COUNT = 1000;
+	public static final int MAX_RESULTS_COUNT = 100;
 
 	protected final TabbedPane tabbedPane;
 	protected final CacheObject cache;
@@ -104,7 +101,16 @@ public abstract class CommonSearchDialog extends JDialog {
 			return;
 		}
 		JNode node = (JNode) resultsModel.getValueAt(selectedId, 0);
-		tabbedPane.codeJump(new Position(node.getRootClass(), node.getLine()));
+        if (node instanceof NextPageNode) {
+            resultsModel.nextPage();
+			updateProgressLabel();
+
+			resultsTable.updateTable();
+			resultsTable.scrollRectToVisible(new Rectangle(0,0,1,1));
+            return;
+        } else {
+		    tabbedPane.codeJump(new Position(node.getRootClass(), node.getLine()));
+        }
 
 		dispose();
 	}
@@ -167,11 +173,7 @@ public abstract class CommonSearchDialog extends JDialog {
 		resultsTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
 		resultsTable.setAutoscrolls(false);
 
-		Enumeration<TableColumn> columns = resultsTable.getColumnModel().getColumns();
-		while (columns.hasMoreElements()) {
-			TableColumn column = columns.nextElement();
-			column.setCellRenderer(renderer);
-		}
+		resultsTable.setDefaultRenderer(Object.class, renderer);
 
 		resultsTable.addMouseListener(new MouseAdapter() {
 			public void mouseClicked(MouseEvent evt) {
@@ -201,6 +203,12 @@ public abstract class CommonSearchDialog extends JDialog {
 				ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED));
 		resultsPanel.setBorder(BorderFactory.createEmptyBorder(0, 10, 10, 10));
 		return resultsPanel;
+	}
+
+	protected void updateProgressLabel() {
+		String statusText = String.format("Showing results %d to %d of %d", resultsModel.getResultStart(),
+				resultsModel.getResultEnd(), resultsModel.getResultCount());
+		progressPane.setLabel(statusText);
 	}
 
 	protected static class ResultsTable extends JTable {
@@ -258,6 +266,7 @@ public abstract class CommonSearchDialog extends JDialog {
 		private final List<JNode> rows = new ArrayList<JNode>();
 		private final ResultsTableCellRenderer renderer;
 		private boolean addDescColumn;
+		private int start = 0;
 
 		public ResultsModel(ResultsTableCellRenderer renderer) {
 			this.renderer = renderer;
@@ -265,13 +274,6 @@ public abstract class CommonSearchDialog extends JDialog {
 
 		protected void addAll(Iterable<? extends JNode> nodes) {
 			for (JNode node : nodes) {
-				int size = getRowCount();
-				if (size >= MAX_RESULTS_COUNT) {
-					if (size == MAX_RESULTS_COUNT) {
-						add(new TextNode("Search results truncated (limit: " + MAX_RESULTS_COUNT + ")"));
-					}
-					return;
-				}
 				add(node);
 			}
 		}
@@ -284,6 +286,7 @@ public abstract class CommonSearchDialog extends JDialog {
 		}
 
 		public void clear() {
+			start = 0;
 			addDescColumn = false;
 			rows.clear();
 			renderer.clear();
@@ -293,9 +296,25 @@ public abstract class CommonSearchDialog extends JDialog {
 			return addDescColumn;
 		}
 
+        public int getResultCount() {
+            return rows.size();
+        }
+
+		public int getResultStart() {
+			return start + 1;
+		}
+
+		public int getResultEnd() {
+			return  Math.min(rows.size(), start + MAX_RESULTS_COUNT);
+		}
+
 		@Override
 		public int getRowCount() {
-			return rows.size();
+			int count = rows.size() - start;
+			if (count > MAX_RESULTS_COUNT) {
+				return MAX_RESULTS_COUNT + 1;
+			}
+			return count;
 		}
 
 		@Override
@@ -308,11 +327,29 @@ public abstract class CommonSearchDialog extends JDialog {
 			return COLUMN_NAMES[index];
 		}
 
+        public void nextPage() {
+			renderer.clear();
+            start += MAX_RESULTS_COUNT;
+			fireTableStructureChanged();
+        }
+
 		@Override
 		public Object getValueAt(int rowIndex, int columnIndex) {
-			return rows.get(rowIndex);
+            if (rowIndex >= MAX_RESULTS_COUNT) {
+                int nextPageStart = start + MAX_RESULTS_COUNT + 1;
+                int nextPageEnd = Math.min(rows.size(), nextPageStart + MAX_RESULTS_COUNT - 1);
+                return new NextPageNode(String.format("Show search results %d to %d", nextPageStart, nextPageEnd));
+            }
+			return rows.get(rowIndex + start);
 		}
 	}
+
+    private static class NextPageNode extends TextNode {
+
+        public NextPageNode(String str) {
+            super(str);
+        }
+    }
 
 	protected class ResultsTableCellRenderer implements TableCellRenderer {
 		private final Color selectedBackground;
@@ -434,7 +471,7 @@ public abstract class CommonSearchDialog extends JDialog {
 	private void loadFinishedCommon() {
 		setCursor(null);
 		resultsTable.setEnabled(true);
-		progressPane.setVisible(false);
+		progressPane.hideProgressBar();
 
 		TextSearchIndex textIndex = cache.getTextIndex();
 		if (textIndex == null) {

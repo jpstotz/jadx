@@ -85,6 +85,7 @@ public class SearchDialog extends CommonSearchDialog {
 		String text = searchField.getText();
 		if (text == null || text.isEmpty() || options.isEmpty()) {
 			resultsTable.updateTable();
+			updateProgressLabel();
 			return;
 		}
 		cache.setLastSearch(text);
@@ -107,6 +108,7 @@ public class SearchDialog extends CommonSearchDialog {
 		}
 		highlightText = text;
 		resultsTable.updateTable();
+		updateProgressLabel();
 	}
 
 	private class SearchFieldListener implements DocumentListener, ActionListener {
@@ -118,6 +120,7 @@ public class SearchDialog extends CommonSearchDialog {
 				timer.restart();
 			} else {
 				timer = new Timer(300, this);
+				timer.setRepeats(false);
 				timer.start();
 			}
 		}
