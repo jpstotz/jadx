@@ -34,7 +34,6 @@ public class ProgressPanel extends JPanel implements PropertyChangeListener {
 
 		setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
 		setLayout(new BoxLayout(this, BoxLayout.X_AXIS));
-		setVisible(false);
 		add(progressLabel);
 		add(progressBar);
 
@@ -78,5 +77,10 @@ public class ProgressPanel extends JPanel implements PropertyChangeListener {
 
 	public void changeLabel(SwingWorker<?, ?> task, String label) {
 		task.firePropertyChange("label", null, label);
+	}
+
+	public void hideProgressBar() {
+		progressLabel.setText("");
+		progressBar.setVisible(false);
 	}
 }
