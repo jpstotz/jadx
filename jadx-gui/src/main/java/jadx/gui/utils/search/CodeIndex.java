@@ -29,15 +29,18 @@ public class CodeIndex<T> extends SearchIndex<T> {
 	}
 
 	@Override
-	public List<T> getValuesForKeysContaining(String str) {
+	public List<T> getValuesForKeysContaining(String str, boolean caseInsensitive) {
 		int size = size();
 		if (size == 0) {
 			return Collections.emptyList();
 		}
+		if (caseInsensitive) {
+			str = str.toLowerCase();
+		}
 		List<T> results = new ArrayList<T>();
 		for (int i = 0; i < size; i++) {
 			StringRef key = keys.get(i);
-			if (key.indexOf(str) != -1) {
+			if (key.indexOf(str, caseInsensitive) != -1) {
 				results.add(values.get(i));
 			}
 		}

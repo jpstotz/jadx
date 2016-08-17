@@ -71,6 +71,7 @@ public abstract class CommonSearchDialog extends JDialog {
 	protected ProgressPanel progressPane;
 
 	protected String highlightText;
+	protected boolean highlightTextCaseInsensitive = false;
 
 	public CommonSearchDialog(MainWindow mainWindow) {
 		super(mainWindow);
@@ -413,7 +414,7 @@ public abstract class CommonSearchDialog extends JDialog {
 			textArea.setColumns(textArea.getText().length());
 			if (highlightText != null) {
 				SearchContext searchContext = new SearchContext(highlightText);
-				searchContext.setMatchCase(true);
+				searchContext.setMatchCase(!highlightTextCaseInsensitive);
 				searchContext.setMarkAll(true);
 				SearchEngine.markAll(textArea, searchContext);
 			}
