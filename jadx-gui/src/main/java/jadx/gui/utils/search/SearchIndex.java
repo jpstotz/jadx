@@ -14,7 +14,7 @@ public abstract class SearchIndex<V> {
 		return false;
 	}
 
-	public abstract List<V> getValuesForKeysContaining(String str);
+	public abstract List<V> getValuesForKeysContaining(String str, boolean caseInsensitive);
 
 	public abstract int size();
 }

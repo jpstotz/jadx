@@ -16,14 +16,20 @@ public class SimpleIndex<T> extends SearchIndex<T> {
 	}
 
 	@Override
-	public List<T> getValuesForKeysContaining(String str) {
+	public List<T> getValuesForKeysContaining(String str, boolean caseInsensitive) {
 		int size = size();
 		if (size == 0) {
 			return Collections.emptyList();
 		}
+		if (caseInsensitive) {
+			str = str.toLowerCase();
+		}
 		List<T> results = new ArrayList<T>();
 		for (int i = 0; i < size; i++) {
 			String key = keys.get(i);
+			if (caseInsensitive) {
+				key = key.toLowerCase();
+			}
 			if (key.contains(str)) {
 				results.add(values.get(i));
 			}
