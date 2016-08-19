@@ -302,6 +302,8 @@ public abstract class CommonSearchDialog extends JDialog {
         }
 
 		public int getResultStart() {
+			if (rows.size() == 0)
+				return 0;
 			return start + 1;
 		}
 

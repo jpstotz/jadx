@@ -70,6 +70,7 @@ public class UsageDialog extends CommonSearchDialog {
 		// TODO: highlight only needed node usage
 		highlightText = null;
 		resultsTable.updateTable();
+		updateProgressLabel();
 	}
 
 	private void initUI() {
