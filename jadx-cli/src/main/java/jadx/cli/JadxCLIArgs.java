@@ -1,10 +1,13 @@
 package jadx.cli;
 
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.Appender;
-import jadx.api.IJadxArgs;
-import jadx.api.JadxDecompiler;
-import jadx.core.utils.exceptions.JadxException;
+import com.beust.jcommander.IStringConverter;
+import com.beust.jcommander.JCommander;
+import com.beust.jcommander.Parameter;
+import com.beust.jcommander.ParameterDescription;
+import com.beust.jcommander.ParameterException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.PrintStream;
@@ -14,14 +17,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.beust.jcommander.IStringConverter;
-import com.beust.jcommander.JCommander;
-import com.beust.jcommander.Parameter;
-import com.beust.jcommander.ParameterDescription;
-import com.beust.jcommander.ParameterException;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.Appender;
+import jadx.api.IJadxArgs;
+import jadx.api.JadxDecompiler;
+import jadx.core.utils.exceptions.JadxException;
 
 public class JadxCLIArgs implements IJadxArgs {
 
@@ -54,7 +54,7 @@ public class JadxCLIArgs implements IJadxArgs {
 	protected boolean escapeUnicode = false;
 
 	@Parameter(names = {"--deobf"}, description = "activate deobfuscation")
-	protected boolean deobfuscationOn = false;
+	protected boolean deobfuscationOn = true;
 
 	@Parameter(names = {"--deobf-min"}, description = "min length of name")
 	protected int deobfuscationMinLength = 2;
@@ -66,7 +66,7 @@ public class JadxCLIArgs implements IJadxArgs {
 	protected boolean deobfuscationForceSave = false;
 
 	@Parameter(names = {"--deobf-use-sourcename"}, description = "use source file name as class name alias")
-	protected boolean deobfuscationUseSourceNameAsAlias = false;
+	protected boolean deobfuscationUseSourceNameAsAlias = true;
 
 	@Parameter(names = {"--cfg"}, description = "save methods control flow graph to dot file")
 	protected boolean cfgOutput = false;
