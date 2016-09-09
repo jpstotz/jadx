@@ -1,18 +1,19 @@
 package jadx.core.xmlgen;
 
-import jadx.api.ResourceFile;
-import jadx.api.ResourceType;
-import jadx.core.codegen.CodeWriter;
+import org.apache.commons.io.FilenameUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.util.List;
 
-import org.apache.commons.io.FilenameUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import javax.imageio.ImageIO;
+
+import jadx.api.ResourceFile;
+import jadx.api.ResourceType;
+import jadx.core.codegen.CodeWriter;
 
 import static jadx.core.utils.files.FileUtils.prepareFile;
 
@@ -21,10 +22,19 @@ public class ResourcesSaver implements Runnable {
 
 	private final ResourceFile resourceFile;
 	private File outDir;
+	private File assetsOutDir;
+	private File jniLibsOutDir;
 
 	public ResourcesSaver(File outDir, ResourceFile resourceFile) {
 		this.resourceFile = resourceFile;
 		this.outDir = outDir;
+	}
+
+	public ResourcesSaver(File outDir, File assetsOutDir, File jniLibsOutDir, ResourceFile resourceFile) {
+		this.resourceFile = resourceFile;
+		this.outDir = outDir;
+		this.assetsOutDir = assetsOutDir;
+		this.jniLibsOutDir = jniLibsOutDir;
 	}
 
 	@Override
@@ -34,11 +44,17 @@ public class ResourcesSaver implements Runnable {
 		}
 		ResContainer rc = resourceFile.loadContent();
 		if (rc != null) {
-			saveResources(rc);
+			if (resourceFile.getType().equals(ResourceType.ASSET)) {
+				saveResources(rc, assetsOutDir);
+			} else if (resourceFile.getType().equals(ResourceType.LIB)) {
+				saveResources(rc, jniLibsOutDir);
+			} else {
+				saveResources(rc, outDir);
+			}
 		}
 	}
 
-	private void saveResources(ResContainer rc) {
+	private void saveResources(ResContainer rc, File outDir) {
 		if (rc == null) {
 			return;
 		}
@@ -47,7 +63,7 @@ public class ResourcesSaver implements Runnable {
 			save(rc, outDir);
 		} else {
 			for (ResContainer subFile : subFiles) {
-				saveResources(subFile);
+				saveResources(subFile, outDir);
 			}
 		}
 	}

@@ -1,11 +1,7 @@
 package jadx.core.export;
 
-import jadx.core.dex.attributes.AFlag;
-import jadx.core.dex.nodes.ClassNode;
-import jadx.core.dex.nodes.DexNode;
-import jadx.core.dex.nodes.RootNode;
-import jadx.core.utils.exceptions.JadxRuntimeException;
-import jadx.core.utils.files.FileUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -14,8 +10,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.nodes.ClassNode;
+import jadx.core.dex.nodes.DexNode;
+import jadx.core.dex.nodes.RootNode;
+import jadx.core.utils.exceptions.JadxRuntimeException;
+import jadx.core.utils.files.FileUtils;
 
 public class ExportGradleProject {
 
@@ -30,18 +30,24 @@ public class ExportGradleProject {
 	private final File outDir;
 	private File srcOutDir;
 	private File resOutDir;
+	private File assetsOutDir;
+	private File jniLibsOutDir;
 
 	public ExportGradleProject(RootNode root, File outDir) {
 		this.root = root;
 		this.outDir = outDir;
 		this.srcOutDir = new File(outDir, "src/main/java");
 		this.resOutDir = new File(outDir, "src/main");
+		this.assetsOutDir = new File(outDir, "src/main/assets");
+		this.jniLibsOutDir = new File(outDir, "src/main/jniLibs");
 	}
 
 	public void init() {
 		try {
 			FileUtils.makeDirsForFile(srcOutDir);
 			FileUtils.makeDirsForFile(resOutDir);
+			FileUtils.makeDirsForFile(assetsOutDir);
+			FileUtils.makeDirsForFile(jniLibsOutDir);
 			saveBuildGradle();
 			skipGeneratedClasses();
 		} catch (Exception e) {
@@ -81,5 +87,13 @@ public class ExportGradleProject {
 
 	public File getResOutDir() {
 		return resOutDir;
+	}
+
+	public File getAssetsOutDir() {
+		return assetsOutDir;
+	}
+
+	public File getJniLibsOutDir() {
+		return jniLibsOutDir;
 	}
 }

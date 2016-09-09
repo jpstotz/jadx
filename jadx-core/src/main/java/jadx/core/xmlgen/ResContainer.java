@@ -1,9 +1,8 @@
 package jadx.core.xmlgen;
 
-import jadx.core.codegen.CodeWriter;
-import jadx.core.utils.exceptions.JadxRuntimeException;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.InputStream;
@@ -11,8 +10,10 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import javax.imageio.ImageIO;
+
+import jadx.core.codegen.CodeWriter;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public class ResContainer implements Comparable<ResContainer> {
 
@@ -54,6 +55,12 @@ public class ResContainer implements Comparable<ResContainer> {
 	}
 
 	public String getFileName() {
+		if (name.startsWith("assets/")) {
+			return name.replace("assets/", "").replace("/", File.separator);
+		}
+		if (name.startsWith("lib/")) {
+			return name.replace("lib/", "").replace("/", File.separator);
+		}
 		return name.replace("/", File.separator);
 	}
 
