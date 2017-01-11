@@ -30,6 +30,7 @@ public class UsageDialog extends CommonSearchDialog {
 	public UsageDialog(MainWindow mainWindow, JNode node) {
 		super(mainWindow);
 		this.node = node;
+		this.closeDialogOnSelection = false; // don't close the usages search dialog when double clicking a search result entry
 
 		initUI();
 		addWindowListener(new WindowAdapter() {
@@ -93,7 +94,8 @@ public class UsageDialog extends CommonSearchDialog {
 		contentPane.add(resultsPanel, BorderLayout.CENTER);
 		contentPane.add(buttonPane, BorderLayout.PAGE_END);
 
-		setTitle(NLS.str("usage_dialog.title"));
+		String title = String.format("%s - %s", NLS.str("usage_dialog.title"), this.node.getJavaNode().getFullName());
+		setTitle(title);
 		pack();
 		setSize(800, 500);
 		setLocationRelativeTo(null);

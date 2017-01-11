@@ -72,9 +72,10 @@ public abstract class CommonSearchDialog extends JDialog {
 
 	protected String highlightText;
 	protected boolean highlightTextCaseInsensitive = false;
+	protected boolean closeDialogOnSelection = true;
 
 	public CommonSearchDialog(MainWindow mainWindow) {
-		super(mainWindow);
+		super((Dialog) null); // we pass null as we want a taskbar entry for the search dialog
 		this.mainWindow = mainWindow;
 		this.tabbedPane = mainWindow.getTabbedPane();
 		this.cache = mainWindow.getCacheObject();
@@ -97,6 +98,10 @@ public abstract class CommonSearchDialog extends JDialog {
 	}
 
 	protected void openSelectedItem() {
+		openSelectedItem(closeDialogOnSelection);
+	}
+
+	protected void openSelectedItem(boolean closeSearchDialog) {
 		int selectedId = resultsTable.getSelectedRow();
 		if (selectedId == -1) {
 			return;
@@ -112,8 +117,11 @@ public abstract class CommonSearchDialog extends JDialog {
         } else {
 		    tabbedPane.codeJump(new Position(node.getRootClass(), node.getLine()));
         }
-
-		dispose();
+		if (closeSearchDialog) {
+			dispose();
+		} else {
+			mainWindow.toFront();
+		}
 	}
 
 	@Override
