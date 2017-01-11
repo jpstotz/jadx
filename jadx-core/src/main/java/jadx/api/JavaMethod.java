@@ -22,7 +22,7 @@ public final class JavaMethod implements JavaNode {
 
 	@Override
 	public String getFullName() {
-		return mth.getMethodInfo().getFullName();
+		 return mth.getParentClass().getFullName() + '.' + getName();
 	}
 
 	@Override
