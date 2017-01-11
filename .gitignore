@@ -25,3 +25,5 @@ gradle.properties
 *.log
 *.cfg
 
+/jadx-gui/src/main/launch4j/jadx-gui.exe
+*.DS_Store
