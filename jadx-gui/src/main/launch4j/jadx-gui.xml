@@ -28,4 +28,16 @@
     <runtimeBits>64/32</runtimeBits>
     <maxHeapPercent>80</maxHeapPercent>
   </jre>
+  <versionInfo>
+    <fileVersion>1.0.0.0</fileVersion>
+    <txtFileVersion>snapshot</txtFileVersion>
+    <fileDescription>jadx-gui </fileDescription>
+    <copyright>skylot and others</copyright>
+    <productVersion>1.0.0.0</productVersion>
+    <txtProductVersion>1.0.0.0</txtProductVersion>
+    <productName>jadx-gui</productName>
+    <companyName></companyName>
+    <internalName>jadx-gui</internalName>
+    <originalFilename>jadx-gui.exe</originalFilename>
+  </versionInfo>
 </launch4jConfig>
