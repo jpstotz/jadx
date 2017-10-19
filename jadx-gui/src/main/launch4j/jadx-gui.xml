@@ -36,8 +36,10 @@
     <productVersion>1.0.0.0</productVersion>
     <txtProductVersion>1.0.0.0</txtProductVersion>
     <productName>jadx-gui</productName>
-    <companyName></companyName>
+    <companyName>-</companyName>
     <internalName>jadx-gui</internalName>
     <originalFilename>jadx-gui.exe</originalFilename>
+    <trademarks></trademarks>
+    <language>ENGLISH_US</language>
   </versionInfo>
 </launch4jConfig>
