@@ -590,6 +590,10 @@ public class InsnGen {
 	}
 
 	private void inlineAnonymousConstructor(CodeWriter code, ClassNode cls, ConstructorInsn insn) throws CodegenException {
+		if (this.mth.getParentClass() == cls) {
+			throw new CodegenException("Anonymous inner class unlimited recursion detected.");
+		}
+
 		cls.add(AFlag.DONT_GENERATE);
 		ArgType parent;
 		if (cls.getInterfaces().size() == 1) {
