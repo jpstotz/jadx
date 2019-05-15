@@ -66,6 +66,8 @@ import org.fife.ui.rsyntaxtextarea.Theme;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import soot.G;
+
 import jadx.api.JadxArgs;
 import jadx.api.JavaNode;
 import jadx.api.ResourceFile;
@@ -368,6 +370,7 @@ public class MainWindow extends JFrame {
 	}
 
 	protected void resetCache() {
+		G.reset();
 		cacheObject.reset();
 		// TODO: decompilation freezes sometime with several threads
 		int threadsCount = settings.getThreadsCount();

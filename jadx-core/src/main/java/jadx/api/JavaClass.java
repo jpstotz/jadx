@@ -74,6 +74,16 @@ public final class JavaClass implements JavaNode {
 		return cls.getSmali();
 	}
 
+	public String getJimple() {
+		if (decompiler == null) {
+			return null;
+		}
+		if (cls.getSmali() == null) {
+			decompiler.generateJimple(cls);
+		}
+		return cls.getJimple();
+	}
+
 	public synchronized void unload() {
 		cls.unload();
 	}
@@ -268,4 +278,5 @@ public final class JavaClass implements JavaNode {
 	public String toString() {
 		return getFullName();
 	}
+
 }

@@ -8,7 +8,10 @@ import java.util.Arrays;
 import java.util.Collection;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -293,6 +296,27 @@ public class JadxSettingsWindow extends JDialog {
 			needReload();
 		});
 
+		JTextField sootAndroidJar = new JTextField();
+		sootAndroidJar.setText(StringUtils.defaultString(settings.getSootAndroidJar()));
+		sootAndroidJar.getDocument().addDocumentListener(new DocumentListener() {
+
+			@Override
+			public void insertUpdate(DocumentEvent e) {
+				changedUpdate(e);
+			}
+
+			@Override
+			public void removeUpdate(DocumentEvent e) {
+				changedUpdate(e);
+			}
+
+			@Override
+			public void changedUpdate(DocumentEvent e) {
+				settings.setSootAndroidJar(sootAndroidJar.getText());
+				needReload();
+			}
+		});
+
 		SpinnerNumberModel spinnerModel = new SpinnerNumberModel(
 				settings.getThreadsCount(), 1, Runtime.getRuntime().availableProcessors() * 2, 1);
 		JSpinner threadsCount = new JSpinner(spinnerModel);
@@ -375,6 +399,7 @@ public class JadxSettingsWindow extends JDialog {
 		other.addRow(NLS.str("preferences.fsCaseSensitive"), fsCaseSensitive);
 		other.addRow(NLS.str("preferences.fallback"), fallback);
 		other.addRow(NLS.str("preferences.skipResourcesDecode"), resourceDecode);
+		other.addRow("Soot Android JAR file: ", sootAndroidJar);
 		return other;
 	}
 

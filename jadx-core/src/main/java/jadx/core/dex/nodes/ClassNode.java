@@ -56,6 +56,10 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 	private CodeWriter code;
 	// store smali
 	private String smali;
+
+	// store Soot Jimple code
+	private String jimple;
+
 	// store parent for inner classes or 'this' otherwise
 	private ClassNode parentClass;
 
@@ -481,6 +485,14 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 
 	public void setSmali(String smali) {
 		this.smali = smali;
+	}
+
+	public String getJimple() {
+		return jimple;
+	}
+
+	public void setJimple(String jimple) {
+		this.jimple = jimple;
 	}
 
 	public String getSmali() {

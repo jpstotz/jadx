@@ -1,8 +1,11 @@
 package jadx.api;
 
 import java.io.File;
+import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -24,6 +27,12 @@ import org.jf.dexlib2.dexbacked.DexBackedDexFile;
 import org.jf.util.IndentingWriter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import soot.Main;
+import soot.Printer;
+import soot.Scene;
+import soot.SootClass;
+import soot.options.Options;
 
 import jadx.core.Jadx;
 import jadx.core.ProcessClass;
@@ -332,6 +341,39 @@ public final class JadxDecompiler {
 			}
 		} catch (Exception e) {
 			LOG.error("Error generating smali", e);
+		}
+	}
+
+	public void generateJimple(ClassNode cls) {
+		try {
+			String jar = args.getSootAndroidJar();
+			if (jar == null || jar.trim().length() == 0) {
+				throw new RuntimeException("soot Android jar not set -> see Preferences");
+			}
+			Path jarPath = Paths.get(jar);
+			if (!Files.isRegularFile(jarPath)) {
+				throw new RuntimeException("soot Android jar not accessible: " + jarPath);
+			}
+
+			Options o = Options.v();
+			if (o.process_dir().size() == 0) {
+				Path path = cls.dex().getDexFile().getPath();
+				// Soot not initialized
+				o.set_process_multiple_dex(true);
+				o.set_allow_phantom_refs(true);
+				o.set_process_dir(Collections.singletonList(path.toAbsolutePath().toString()));
+				o.set_src_prec(Options.src_prec_apk);
+				o.set_force_android_jar(jarPath.toAbsolutePath().toString());
+				Main.v().autoSetOptions();
+				Scene.v().loadNecessaryClasses();
+			}
+			SootClass sootClass = Scene.v().getSootClass(cls.getFullName());
+			StringWriter sw = new StringWriter(4096);
+			PrintWriter writerOut = new PrintWriter(sw);
+			Printer.v().printTo(sootClass, writerOut);
+			cls.setJimple(sw.toString());
+		} catch (Exception e) {
+			cls.setJimple(e.toString());
 		}
 	}
 

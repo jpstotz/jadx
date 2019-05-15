@@ -87,6 +87,11 @@ public class JClass extends JLoadableNode {
 	}
 
 	@Override
+	public String getJimple() {
+		return cls.getJimple();
+	}
+
+	@Override
 	public String getSyntaxName() {
 		return SyntaxConstants.SYNTAX_STYLE_JAVA;
 	}

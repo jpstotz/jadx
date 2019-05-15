@@ -32,6 +32,10 @@ public abstract class JNode extends DefaultMutableTreeNode {
 		return null;
 	}
 
+	public String getJimple() {
+		return null;
+	}
+
 	public String getSyntaxName() {
 		return SyntaxConstants.SYNTAX_STYLE_NONE;
 	}

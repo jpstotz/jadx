@@ -21,6 +21,8 @@ public final class ClassCodeContentPanel extends AbstractCodeContentPanel {
 
 	private final CodePanel javaCodePanel;
 	private final CodePanel smaliCodePanel;
+	private final CodePanel jimpleCodePanel;
+
 	private JTabbedPane areaTabbedPane = new JTabbedPane(JTabbedPane.BOTTOM);
 
 	public ClassCodeContentPanel(TabbedPane panel, JNode jnode) {
@@ -28,11 +30,13 @@ public final class ClassCodeContentPanel extends AbstractCodeContentPanel {
 
 		javaCodePanel = new CodePanel(this, new CodeArea(this));
 		smaliCodePanel = new CodePanel(this, new SmaliArea(this));
+		jimpleCodePanel = new CodePanel(this, new JimpleArea(this));
 
 		setLayout(new BorderLayout());
 
 		areaTabbedPane.add(javaCodePanel, NLS.str("tabs.code"));
 		areaTabbedPane.add(smaliCodePanel, NLS.str("tabs.smali"));
+		areaTabbedPane.add(jimpleCodePanel, "Jimple");
 		add(areaTabbedPane);
 
 		javaCodePanel.load();

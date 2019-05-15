@@ -60,6 +60,9 @@ public class JadxSettings extends JadxCLIArgs {
 
 	private Map<String, WindowLocation> windowPos = new HashMap<>();
 	private int mainWindowExtendedState = JFrame.NORMAL;
+
+	private String sootAndroidJar;
+
 	/**
 	 * UI setting: the width of the tree showing the classes, resources, ...
 	 */
@@ -377,6 +380,14 @@ public class JadxSettings extends JadxCLIArgs {
 		partialSync(settings -> settings.mainWindowExtendedState = mainWindowExtendedState);
 	}
 
+	public String getSootAndroidJar() {
+		return sootAndroidJar;
+	}
+
+	public void setSootAndroidJar(String sootAndroidJar) {
+		this.sootAndroidJar = sootAndroidJar;
+	}
+
 	private void upgradeSettings(int fromVersion) {
 		LOG.debug("upgrade settings from version: {} to {}", fromVersion, CURRENT_SETTINGS_VERSION);
 		if (fromVersion == 0) {
@@ -428,6 +439,13 @@ public class JadxSettings extends JadxCLIArgs {
 		}
 		settingsVersion = CURRENT_SETTINGS_VERSION;
 		sync();
+	}
+
+	@Override
+	public JadxArgs toJadxArgs() {
+		JadxArgs jadxArgs = super.toJadxArgs();
+		jadxArgs.setSootAndroidJar(this.sootAndroidJar);
+		return jadxArgs;
 	}
 
 	@Override

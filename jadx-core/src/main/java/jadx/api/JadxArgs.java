@@ -56,6 +56,8 @@ public class JadxArgs {
 
 	private boolean fsCaseSensitive;
 
+	private String sootAndroidJar;
+
 	public enum RenameEnum {
 		CASE, VALID, PRINTABLE
 	}
@@ -306,6 +308,14 @@ public class JadxArgs {
 		} else {
 			renameFlags.remove(flag);
 		}
+	}
+
+	public String getSootAndroidJar() {
+		return sootAndroidJar;
+	}
+
+	public void setSootAndroidJar(String sootAndroidJar) {
+		this.sootAndroidJar = sootAndroidJar;
 	}
 
 	@Override
