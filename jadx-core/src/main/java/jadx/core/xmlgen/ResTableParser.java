@@ -10,7 +10,9 @@ import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.ICodeInfo;
 import jadx.core.codegen.CodeWriter;
+import jadx.core.deobf.NameMapper;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.nodes.FieldNode;
 import jadx.core.dex.nodes.RootNode;
@@ -73,12 +75,12 @@ public class ResTableParser extends CommonBinaryParser {
 		ValuesParser vp = new ValuesParser(root, strings, resStorage.getResourcesNames());
 		ResXmlGen resGen = new ResXmlGen(resStorage, vp);
 
-		CodeWriter content = makeXmlDump();
+		ICodeInfo content = makeXmlDump();
 		List<ResContainer> xmlFiles = resGen.makeResourcesXml();
 		return ResContainer.resourceTable("res", xmlFiles, content);
 	}
 
-	public CodeWriter makeXmlDump() {
+	public ICodeInfo makeXmlDump() {
 		CodeWriter writer = new CodeWriter();
 		writer.startLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
 		writer.startLine("<resources>");
@@ -94,8 +96,7 @@ public class ResTableParser extends CommonBinaryParser {
 		}
 		writer.decIndent();
 		writer.startLine("</resources>");
-		writer.finish();
-		return writer;
+		return writer.finish();
 	}
 
 	public ResourceStorage getResStorage() {
@@ -152,6 +153,7 @@ public class ResTableParser extends CommonBinaryParser {
 		if (keyStringsOffset != 0) {
 			is.skipToPos(keyStringsOffset, "Expected keyStrings string pool");
 			keyStrings = parseStringPool();
+			deobfKeyStrings(keyStrings);
 		}
 
 		PackageChunk pkg = new PackageChunk(id, name, typeStrings, keyStrings);
@@ -170,6 +172,32 @@ public class ResTableParser extends CommonBinaryParser {
 			}
 		}
 		return pkg;
+	}
+
+	private void deobfKeyStrings(String[] keyStrings) {
+		int keysCount = keyStrings.length;
+		if (root.getArgs().isRenamePrintable()) {
+			for (int i = 0; i < keysCount; i++) {
+				String keyString = keyStrings[i];
+				if (!NameMapper.isAllCharsPrintable(keyString)) {
+					keyStrings[i] = makeNewKeyName(i);
+				}
+			}
+		}
+		if (root.getArgs().isRenameValid()) {
+			Set<String> keySet = new HashSet<>(keysCount);
+			for (int i = 0; i < keysCount; i++) {
+				String keyString = keyStrings[i];
+				boolean isNew = keySet.add(keyString);
+				if (!isNew) {
+					keyStrings[i] = makeNewKeyName(i);
+				}
+			}
+		}
+	}
+
+	private String makeNewKeyName(int idx) {
+		return "JADX_DEOBF_" + idx;
 	}
 
 	@SuppressWarnings("unused")

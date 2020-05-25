@@ -113,13 +113,11 @@ public class AnnotationGen {
 		return paramName;
 	}
 
-	@SuppressWarnings("unchecked")
 	public void addThrows(MethodNode mth, CodeWriter code) {
-		Annotation an = mth.getAnnotation(Consts.DALVIK_THROWS);
-		if (an != null) {
-			Object exs = an.getDefaultValue();
+		List<ArgType> throwList = mth.getThrows();
+		if (!throwList.isEmpty()) {
 			code.add(" throws ");
-			for (Iterator<ArgType> it = ((List<ArgType>) exs).iterator(); it.hasNext();) {
+			for (Iterator<ArgType> it = throwList.iterator(); it.hasNext();) {
 				ArgType ex = it.next();
 				classGen.useType(code, ex);
 				if (it.hasNext()) {
@@ -147,7 +145,7 @@ public class AnnotationGen {
 		if (val instanceof String) {
 			code.add(getStringUtils().unescapeString((String) val));
 		} else if (val instanceof Integer) {
-			code.add(TypeGen.formatInteger((Integer) val));
+			code.add(TypeGen.formatInteger((Integer) val, false));
 		} else if (val instanceof Character) {
 			code.add(getStringUtils().unescapeChar((Character) val));
 		} else if (val instanceof Boolean) {
@@ -157,11 +155,11 @@ public class AnnotationGen {
 		} else if (val instanceof Double) {
 			code.add(TypeGen.formatDouble((Double) val));
 		} else if (val instanceof Long) {
-			code.add(TypeGen.formatLong((Long) val));
+			code.add(TypeGen.formatLong((Long) val, false));
 		} else if (val instanceof Short) {
-			code.add(TypeGen.formatShort((Short) val));
+			code.add(TypeGen.formatShort((Short) val, false));
 		} else if (val instanceof Byte) {
-			code.add(TypeGen.formatByte((Byte) val));
+			code.add(TypeGen.formatByte((Byte) val, false));
 		} else if (val instanceof ArgType) {
 			classGen.useType(code, (ArgType) val);
 			code.add(".class");

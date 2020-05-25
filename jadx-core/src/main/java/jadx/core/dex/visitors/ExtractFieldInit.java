@@ -35,9 +35,6 @@ public class ExtractFieldInit extends AbstractVisitor {
 
 	@Override
 	public boolean visit(ClassNode cls) throws JadxException {
-		if (cls.isEnum()) {
-			return false;
-		}
 		for (ClassNode inner : cls.getInnerClasses()) {
 			visit(inner);
 		}
@@ -66,12 +63,11 @@ public class ExtractFieldInit extends AbstractVisitor {
 	}
 
 	/**
-	 * Remove final field in place initialization if it assign in class init method
+	 * Remove a final field in place initialization if it an assign found in class init method
 	 */
 	private static void processStaticFieldAssign(ClassNode cls, IndexInsnNode insn) {
 		FieldInfo field = (FieldInfo) insn.getIndex();
-		String thisClass = cls.getClassInfo().getFullName();
-		if (field.getDeclClass().getFullName().equals(thisClass)) {
+		if (field.getDeclClass().equals(cls.getClassInfo())) {
 			FieldNode fn = cls.searchField(field);
 			if (fn != null && fn.getAccessFlags().isFinal()) {
 				fn.remove(AType.FIELD_INIT);
@@ -92,7 +88,7 @@ public class ExtractFieldInit extends AbstractVisitor {
 				List<InsnNode> initInsns = getFieldAssigns(classInitMth, field, InsnType.SPUT);
 				if (initInsns.size() == 1) {
 					InsnNode insn = initInsns.get(0);
-					if (checkInsn(insn)) {
+					if (checkInsn(cls, insn)) {
 						InsnArg arg = insn.getArg(0);
 						if (arg instanceof InsnWrapArg) {
 							((InsnWrapArg) arg).getWrapInsn().add(AFlag.DECLARE_VAR);
@@ -137,7 +133,7 @@ public class ExtractFieldInit extends AbstractVisitor {
 			// TODO: check not only first block
 			BlockNode blockNode = constrMth.getBasicBlocks().get(0);
 			for (InsnNode insn : blockNode.getInstructions()) {
-				if (insn.getType() == InsnType.IPUT && checkInsn(insn)) {
+				if (insn.getType() == InsnType.IPUT && checkInsn(cls, insn)) {
 					info.getPutInsns().add(insn);
 				} else if (!info.getPutInsns().isEmpty()) {
 					break;
@@ -199,7 +195,22 @@ public class ExtractFieldInit extends AbstractVisitor {
 		return true;
 	}
 
-	private static boolean checkInsn(InsnNode insn) {
+	private static boolean checkInsn(ClassNode cls, InsnNode insn) {
+		if (insn instanceof IndexInsnNode) {
+			FieldInfo fieldInfo = (FieldInfo) ((IndexInsnNode) insn).getIndex();
+			if (!fieldInfo.getDeclClass().equals(cls.getClassInfo())) {
+				// exclude fields from super classes
+				return false;
+			}
+			FieldNode fieldNode = cls.dex().resolveField(fieldInfo);
+			if (fieldNode == null) {
+				// exclude inherited fields (not declared in this class)
+				return false;
+			}
+		} else {
+			return false;
+		}
+
 		InsnArg arg = insn.getArg(0);
 		if (arg.isInsnWrap()) {
 			InsnNode wrapInsn = ((InsnWrapArg) arg).getWrapInsn();

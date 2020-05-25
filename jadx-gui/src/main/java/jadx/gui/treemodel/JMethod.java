@@ -2,25 +2,26 @@ package jadx.gui.treemodel;
 
 import java.util.Iterator;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.ImageIcon;
 
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.gui.utils.OverlayIcon;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 
 public class JMethod extends JNode {
 	private static final long serialVersionUID = 3834526867464663751L;
 
-	private static final ImageIcon ICON_MTH_DEF = Utils.openIcon("methdef_obj");
-	private static final ImageIcon ICON_MTH_PRI = Utils.openIcon("methpri_obj");
-	private static final ImageIcon ICON_MTH_PRO = Utils.openIcon("methpro_obj");
-	private static final ImageIcon ICON_MTH_PUB = Utils.openIcon("methpub_obj");
+	private static final ImageIcon ICON_MTH_DEF = UiUtils.openIcon("methdef_obj");
+	private static final ImageIcon ICON_MTH_PRI = UiUtils.openIcon("methpri_obj");
+	private static final ImageIcon ICON_MTH_PRO = UiUtils.openIcon("methpro_obj");
+	private static final ImageIcon ICON_MTH_PUB = UiUtils.openIcon("methpub_obj");
 
-	private static final ImageIcon ICON_CONSTRUCTOR = Utils.openIcon("constr_ovr");
-	private static final ImageIcon ICON_SYNC = Utils.openIcon("synch_co");
+	private static final ImageIcon ICON_CONSTRUCTOR = UiUtils.openIcon("constr_ovr");
+	private static final ImageIcon ICON_SYNC = UiUtils.openIcon("synch_co");
 
 	private final transient JavaMethod mth;
 	private final transient JClass jParent;
@@ -57,7 +58,7 @@ public class JMethod extends JNode {
 	@Override
 	public Icon getIcon() {
 		AccessInfo accessFlags = mth.getAccessFlags();
-		OverlayIcon icon = Utils.makeIcon(accessFlags, ICON_MTH_PUB, ICON_MTH_PRI, ICON_MTH_PRO, ICON_MTH_DEF);
+		OverlayIcon icon = UiUtils.makeIcon(accessFlags, ICON_MTH_PUB, ICON_MTH_PRI, ICON_MTH_PRO, ICON_MTH_DEF);
 		if (accessFlags.isConstructor()) {
 			icon.add(ICON_CONSTRUCTOR);
 		}
@@ -79,7 +80,7 @@ public class JMethod extends JNode {
 		}
 		base.append('(');
 		for (Iterator<ArgType> it = mth.getArguments().iterator(); it.hasNext();) {
-			base.append(Utils.typeStr(it.next()));
+			base.append(UiUtils.typeStr(it.next()));
 			if (it.hasNext()) {
 				base.append(", ");
 			}
@@ -90,13 +91,34 @@ public class JMethod extends JNode {
 
 	@Override
 	public String makeString() {
-		return Utils.typeFormat(makeBaseString(), getReturnType());
+		return UiUtils.typeFormat(makeBaseString(), getReturnType());
+	}
+
+	@Override
+	public String makeStringHtml() {
+		return UiUtils.typeFormatHtml(makeBaseString(), getReturnType());
 	}
 
 	@Override
 	public String makeLongString() {
 		String name = mth.getDeclaringClass().getFullName() + '.' + makeBaseString();
-		return Utils.typeFormat(name, getReturnType());
+		return UiUtils.typeFormat(name, getReturnType());
+	}
+
+	@Override
+	public String makeLongStringHtml() {
+		String name = mth.getDeclaringClass().getFullName() + '.' + makeBaseString();
+		return UiUtils.typeFormatHtml(name, getReturnType());
+	}
+
+	@Override
+	public String makeDescString() {
+		return UiUtils.typeStr(getReturnType()) + " " + makeBaseString();
+	}
+
+	@Override
+	public boolean hasDescString() {
+		return true;
 	}
 
 	@Override

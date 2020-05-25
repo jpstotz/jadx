@@ -23,10 +23,13 @@ import jadx.core.utils.RegionUtils;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.Utils;
 
+import static jadx.core.codegen.MethodGen.FallbackOption.BLOCK_DUMP;
+
 public class DotGraphVisitor extends AbstractVisitor {
 
 	private static final String NL = "\\l";
 	private static final boolean PRINT_DOMINATORS = false;
+	private static final boolean PRINT_DOMINATORS_INFO = false;
 
 	private final boolean useRegions;
 	private final boolean rawInsn;
@@ -97,7 +100,7 @@ public class DotGraphVisitor extends AbstractVisitor {
 			dot.add(escape(mth.getAccessFlags().makeString()));
 			dot.add(escape(mth.getReturnType() + " "
 					+ mth.getParentClass() + '.' + mth.getName()
-					+ '(' + Utils.listToString(mth.getArguments(true)) + ") "));
+					+ '(' + Utils.listToString(mth.getAllArgRegs()) + ") "));
 
 			String attrs = attributesString(mth);
 			if (!attrs.isEmpty()) {
@@ -116,7 +119,11 @@ public class DotGraphVisitor extends AbstractVisitor {
 					+ (useRegions ? ".regions" : "")
 					+ (rawInsn ? ".raw" : "")
 					+ ".dot";
-			dot.save(dir, mth.getParentClass().getClassInfo().getAliasFullPath() + "_graphs", fileName);
+			File file = dir.toPath()
+					.resolve(mth.getParentClass().getClassInfo().getAliasFullPath() + "_graphs")
+					.resolve(fileName)
+					.toFile();
+			SaveCode.save(dot.finish(), file);
 		}
 
 		private void processMethodRegion(MethodNode mth) {
@@ -177,6 +184,14 @@ public class DotGraphVisitor extends AbstractVisitor {
 			dot.add(InsnUtils.formatOffset(block.getStartOffset()));
 			if (!attrs.isEmpty()) {
 				dot.add('|').add(attrs);
+			}
+			if (PRINT_DOMINATORS_INFO) {
+				dot.add('|');
+				dot.startLine("doms: ").add(escape(block.getDoms()));
+				dot.startLine("\\lidom: ").add(escape(block.getIDom()));
+				dot.startLine("\\ldom-f: ").add(escape(block.getDomFrontier()));
+				dot.startLine("\\ldoms-on: ").add(escape(Utils.listToString(block.getDominatesOn())));
+				dot.startLine("\\l");
 			}
 			String insns = insertInsns(mth, block);
 			if (!insns.isEmpty()) {
@@ -259,13 +274,20 @@ public class DotGraphVisitor extends AbstractVisitor {
 			} else {
 				CodeWriter code = new CodeWriter();
 				List<InsnNode> instructions = block.getInstructions();
-				MethodGen.addFallbackInsns(code, mth, instructions.toArray(new InsnNode[0]), false);
+				MethodGen.addFallbackInsns(code, mth, instructions.toArray(new InsnNode[0]), BLOCK_DUMP);
 				String str = escape(code.newLine().toString());
 				if (str.startsWith(NL)) {
 					str = str.substring(NL.length());
 				}
 				return str;
 			}
+		}
+
+		private String escape(Object obj) {
+			if (obj == null) {
+				return "null";
+			}
+			return escape(obj.toString());
 		}
 
 		private String escape(String string) {
@@ -277,6 +299,7 @@ public class DotGraphVisitor extends AbstractVisitor {
 					.replace("\"", "\\\"")
 					.replace("-", "\\-")
 					.replace("|", "\\|")
+					.replace(CodeWriter.NL, NL)
 					.replace("\n", NL);
 		}
 	}

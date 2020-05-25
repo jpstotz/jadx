@@ -1,9 +1,6 @@
 package jadx.gui.settings;
 
-import java.awt.Font;
-import java.awt.GraphicsDevice;
-import java.awt.GraphicsEnvironment;
-import java.awt.Window;
+import java.awt.*;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -15,7 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
 
-import javax.swing.JFrame;
+import javax.swing.*;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 import org.jetbrains.annotations.Nullable;
@@ -26,6 +23,7 @@ import com.beust.jcommander.Parameter;
 
 import jadx.api.JadxArgs;
 import jadx.cli.JadxCLIArgs;
+import jadx.cli.LogHelper;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.codearea.EditorTheme;
 import jadx.gui.utils.FontUtils;
@@ -42,7 +40,10 @@ public class JadxSettings extends JadxCLIArgs {
 	private static final Font DEFAULT_FONT = new RSyntaxTextArea().getFont();
 
 	static final Set<String> SKIP_FIELDS = new HashSet<>(Arrays.asList(
-			"files", "input", "outDir", "outDirSrc", "outDirRes", "verbose", "printVersion", "printHelp"));
+			"files", "input", "outDir", "outDirSrc", "outDirRes", "outputFormat",
+			"verbose", "quiet", "logLevel",
+			"printVersion", "printHelp"));
+
 	private Path lastSaveProjectPath = USER_HOME;
 	private Path lastOpenFilePath = USER_HOME;
 	private Path lastSaveFilePath = USER_HOME;
@@ -281,6 +282,10 @@ public class JadxSettings extends JadxCLIArgs {
 		this.deobfuscationUseSourceNameAsAlias = deobfuscationUseSourceNameAsAlias;
 	}
 
+	public void setDeobfuscationParseKotlinMetadata(boolean deobfuscationParseKotlinMetadata) {
+		this.deobfuscationParseKotlinMetadata = deobfuscationParseKotlinMetadata;
+	}
+
 	public void updateRenameFlag(JadxArgs.RenameEnum flag, boolean enabled) {
 		if (enabled) {
 			renameFlags.add(flag);
@@ -363,6 +368,10 @@ public class JadxSettings extends JadxCLIArgs {
 		}
 	}
 
+	public void setLogLevel(LogHelper.LogLevelEnum level) {
+		this.logLevel = level;
+	}
+
 	public String getEditorThemePath() {
 		return editorThemePath;
 	}
@@ -393,6 +402,7 @@ public class JadxSettings extends JadxCLIArgs {
 		if (fromVersion == 0) {
 			setDeobfuscationMinLength(3);
 			setDeobfuscationUseSourceNameAsAlias(true);
+			setDeobfuscationParseKotlinMetadata(true);
 			setDeobfuscationForceSave(true);
 			setThreadsCount(1);
 			setReplaceConsts(true);

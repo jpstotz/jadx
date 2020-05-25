@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -38,20 +39,22 @@ public class ConvertToClsSet {
 			if (f.isDirectory()) {
 				addFilesFromDirectory(f, inputFiles);
 			} else {
-				InputFile.addFilesFrom(f, inputFiles);
+				InputFile.addFilesFrom(f, inputFiles, false);
 			}
 		}
 		for (InputFile inputFile : inputFiles) {
 			LOG.info("Loaded: {}", inputFile.getFile());
 		}
 
-		RootNode root = new RootNode(new JadxArgs());
+		JadxArgs jadxArgs = new JadxArgs();
+		jadxArgs.setRenameFlags(EnumSet.noneOf(JadxArgs.RenameEnum.class));
+		RootNode root = new RootNode(jadxArgs);
 		root.load(inputFiles);
 
-		ClsSet set = new ClsSet();
-		set.load(root);
+		ClsSet set = new ClsSet(root);
+		set.loadFrom(root);
 		set.save(output);
-		LOG.info("Output: {}", output);
+		LOG.info("Output: {}, file size: {}B", output, output.toFile().length());
 		LOG.info("done");
 	}
 
@@ -65,7 +68,7 @@ public class ConvertToClsSet {
 				addFilesFromDirectory(file, inputFiles);
 			} else {
 				try {
-					InputFile.addFilesFrom(file, inputFiles);
+					InputFile.addFilesFrom(file, inputFiles, false);
 				} catch (Exception e) {
 					LOG.warn("Skip file: {}, load error: {}", file, e.getMessage());
 				}

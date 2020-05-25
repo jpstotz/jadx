@@ -9,6 +9,8 @@ import java.util.Map;
 
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.android.dex.ClassData;
 import com.android.dex.ClassData.Method;
@@ -25,9 +27,11 @@ import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.files.DexFile;
 
 public class DexNode implements IDexNode {
+	private static final Logger LOG = LoggerFactory.getLogger(DexNode.class);
 
 	public static final int NO_INDEX = -1;
 
@@ -38,20 +42,45 @@ public class DexNode implements IDexNode {
 
 	private final List<ClassNode> classes = new ArrayList<>();
 	private final Map<ClassInfo, ClassNode> clsMap = new HashMap<>();
+	private final ArgType[] typesCache;
 
 	public DexNode(RootNode root, DexFile input, int dexId) {
 		this.root = root;
 		this.file = input;
 		this.dexBuf = input.getDexBuf();
 		this.dexId = dexId;
+		this.typesCache = new ArgType[dexBuf.typeIds().size()];
 	}
 
 	public void loadClasses() {
 		for (ClassDef cls : dexBuf.classDefs()) {
-			addClassNode(new ClassNode(this, cls));
+			try {
+				addClassNode(new ClassNode(this, cls));
+			} catch (Exception e) {
+				addDummyClass(cls, e);
+			}
 		}
 		// sort classes by name, expect top classes before inner
 		classes.sort(Comparator.comparing(ClassNode::getFullName));
+	}
+
+	private void addDummyClass(ClassDef classDef, Exception exc) {
+		int typeIndex = classDef.getTypeIndex();
+		String name = null;
+		try {
+			ClassInfo clsInfo = ClassInfo.fromDex(this, typeIndex);
+			if (clsInfo != null) {
+				name = clsInfo.getShortName();
+			}
+		} catch (Exception e) {
+			LOG.error("Failed to get name for class with type {}", typeIndex, e);
+		}
+		if (name == null || name.isEmpty()) {
+			name = "CLASS_" + typeIndex;
+		}
+		ClassNode clsNode = new ClassNode(this, name, classDef.getAccessFlags());
+		ErrorsCounter.error(clsNode, "Load error", exc);
+		addClassNode(clsNode);
 	}
 
 	public void addClassNode(ClassNode clsNode) {
@@ -207,7 +236,15 @@ public class DexNode implements IDexNode {
 		if (index == DexNode.NO_INDEX) {
 			return null;
 		}
-		return ArgType.parse(getString(dexBuf.typeIds().get(index)));
+		ArgType type = typesCache[index];
+		if (type != null) {
+			return type;
+		}
+		// no synchronization because exactly one ArgType instance not needed, just reduce instances count
+		// note: same types but different instances will exist in other dex nodes
+		ArgType parsedType = ArgType.parse(getString(dexBuf.typeIds().get(index)));
+		typesCache[index] = parsedType;
+		return parsedType;
 	}
 
 	public MethodId getMethodId(int mthIndex) {

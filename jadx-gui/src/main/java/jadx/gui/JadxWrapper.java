@@ -45,7 +45,7 @@ public class JadxWrapper {
 		}
 	}
 
-	public void saveAll(final File dir, final ProgressMonitor progressMonitor) {
+	public void saveAll(File dir, ProgressMonitor progressMonitor) {
 		Runnable save = () -> {
 			try {
 				decompiler.getArgs().setRootDir(dir);
@@ -131,16 +131,38 @@ public class JadxWrapper {
 		return openFile;
 	}
 
+	public JadxDecompiler getDecompiler() {
+		return decompiler;
+	}
+
 	public JadxArgs getArgs() {
 		return decompiler.getArgs();
 	}
 
 	/**
 	 * @param fullName Full name of an outer class. Inner classes are not supported.
-	 * @return
 	 */
 	public @Nullable JavaClass searchJavaClassByClassName(String fullName) {
-		return decompiler.getClasses().stream().filter(cls -> cls.getFullName().equals(fullName))
-				.findFirst().orElse(null);
+		return decompiler.getClasses().stream()
+				.filter(cls -> cls.getFullName().equals(fullName))
+				.findFirst()
+				.orElse(null);
+	}
+
+	public @Nullable JavaClass searchJavaClassByOrigClassName(String fullName) {
+		return decompiler.getClasses().stream()
+				.filter(cls -> cls.getClassNode().getClassInfo().getFullName().equals(fullName))
+				.findFirst()
+				.orElse(null);
+	}
+
+	/**
+	 * @param rawName Full raw name of an outer class. Inner classes are not supported.
+	 */
+	public @Nullable JavaClass searchJavaClassByRawName(String rawName) {
+		return decompiler.getClasses().stream()
+				.filter(cls -> cls.getRawName().equals(rawName))
+				.findFirst()
+				.orElse(null);
 	}
 }

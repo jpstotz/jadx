@@ -22,7 +22,7 @@ import jadx.gui.treemodel.JNode;
 import jadx.gui.ui.SearchDialog;
 import jadx.gui.utils.CodeLinesInfo;
 import jadx.gui.utils.JNodeCache;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 
 import static jadx.gui.ui.SearchDialog.SearchOptions.CLASS;
 import static jadx.gui.ui.SearchDialog.SearchOptions.CODE;
@@ -37,8 +37,8 @@ public class TextSearchIndex {
 	private final JNodeCache nodeCache;
 
 	private SearchIndex<JNode> clsNamesIndex;
-	private SearchIndex<JNode> mthNamesIndex;
-	private SearchIndex<JNode> fldNamesIndex;
+	private SearchIndex<JNode> mthSignaturesIndex;
+	private SearchIndex<JNode> fldSignaturesIndex;
 	private SearchIndex<CodeNode> codeIndex;
 
 	private List<JavaClass> skippedClasses = new ArrayList<>();
@@ -46,18 +46,20 @@ public class TextSearchIndex {
 	public TextSearchIndex(JNodeCache nodeCache) {
 		this.nodeCache = nodeCache;
 		this.clsNamesIndex = new SimpleIndex<>();
-		this.mthNamesIndex = new SimpleIndex<>();
-		this.fldNamesIndex = new SimpleIndex<>();
+		this.mthSignaturesIndex = new SimpleIndex<>();
+		this.fldSignaturesIndex = new SimpleIndex<>();
 		this.codeIndex = new CodeIndex<>();
 	}
 
 	public void indexNames(JavaClass cls) {
 		clsNamesIndex.put(cls.getFullName(), nodeCache.makeFrom(cls));
 		for (JavaMethod mth : cls.getMethods()) {
-			mthNamesIndex.put(mth.getFullName(), nodeCache.makeFrom(mth));
+			JNode mthNode = nodeCache.makeFrom(mth);
+			mthSignaturesIndex.put(mthNode.makeDescString(), mthNode);
 		}
 		for (JavaField fld : cls.getFields()) {
-			fldNamesIndex.put(fld.getFullName(), nodeCache.makeFrom(fld));
+			JNode fldNode = nodeCache.makeFrom(fld);
+			fldSignaturesIndex.put(fldNode.makeDescString(), fldNode);
 		}
 		for (JavaClass innerCls : cls.getInnerClasses()) {
 			indexNames(innerCls);
@@ -97,10 +99,10 @@ public class TextSearchIndex {
 			result = Flowable.concat(result, clsNamesIndex.search(text, ignoreCase));
 		}
 		if (options.contains(METHOD)) {
-			result = Flowable.concat(result, mthNamesIndex.search(text, ignoreCase));
+			result = Flowable.concat(result, mthSignaturesIndex.search(text, ignoreCase));
 		}
 		if (options.contains(FIELD)) {
-			result = Flowable.concat(result, fldNamesIndex.search(text, ignoreCase));
+			result = Flowable.concat(result, fldSignaturesIndex.search(text, ignoreCase));
 		}
 		if (options.contains(CODE)) {
 			if (codeIndex.size() > 0) {
@@ -126,13 +128,13 @@ public class TextSearchIndex {
 						return;
 					}
 				}
-				if (!Utils.isFreeMemoryAvailable()) {
-					LOG.warn("Skipped code search stopped due to memory limit: {}", Utils.memoryInfo());
+				if (!UiUtils.isFreeMemoryAvailable()) {
+					LOG.warn("Skipped code search stopped due to memory limit: {}", UiUtils.memoryInfo());
 					emitter.onComplete();
 					return;
 				}
 			}
-			LOG.debug("Skipped code search complete: {}, memory usage: {}", searchStr, Utils.memoryInfo());
+			LOG.debug("Skipped code search complete: {}, memory usage: {}", searchStr, UiUtils.memoryInfo());
 			emitter.onComplete();
 		}, BackpressureStrategy.LATEST);
 	}

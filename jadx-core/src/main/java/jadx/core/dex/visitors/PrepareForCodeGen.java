@@ -1,9 +1,19 @@
 package jadx.core.dex.visitors;
 
+import java.util.Collection;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Stream;
+
+import org.jetbrains.annotations.Nullable;
 
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.attributes.AType;
+import jadx.core.dex.attributes.nodes.DeclareVariablesAttr;
+import jadx.core.dex.attributes.nodes.LineAttrNode;
 import jadx.core.dex.instructions.ArithNode;
 import jadx.core.dex.instructions.ArithOp;
 import jadx.core.dex.instructions.InsnType;
@@ -13,12 +23,17 @@ import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.mods.ConstructorInsn;
 import jadx.core.dex.instructions.mods.TernaryInsn;
 import jadx.core.dex.nodes.BlockNode;
+import jadx.core.dex.nodes.ClassNode;
+import jadx.core.dex.nodes.InsnContainer;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.dex.regions.Region;
 import jadx.core.dex.regions.conditions.IfCondition;
 import jadx.core.dex.regions.conditions.IfCondition.Mode;
 import jadx.core.dex.visitors.regions.variables.ProcessVariables;
 import jadx.core.dex.visitors.shrink.CodeShrinkVisitor;
+import jadx.core.utils.BlockUtils;
+import jadx.core.utils.InsnList;
 import jadx.core.utils.exceptions.JadxException;
 
 /**
@@ -32,6 +47,14 @@ import jadx.core.utils.exceptions.JadxException;
 		runAfter = { CodeShrinkVisitor.class, ClassModifier.class, ProcessVariables.class }
 )
 public class PrepareForCodeGen extends AbstractVisitor {
+
+	@Override
+	public boolean visit(ClassNode cls) throws JadxException {
+		if (cls.root().getArgs().isDebugInfo()) {
+			setClassSourceLine(cls);
+		}
+		return true;
+	}
 
 	@Override
 	public void visit(MethodNode mth) throws JadxException {
@@ -48,6 +71,7 @@ public class PrepareForCodeGen extends AbstractVisitor {
 			removeParenthesis(block);
 			modifyArith(block);
 		}
+		moveConstructorInConstructor(mth);
 	}
 
 	private static void removeInstructions(BlockNode block) {
@@ -155,7 +179,8 @@ public class PrepareForCodeGen extends AbstractVisitor {
 		List<InsnNode> list = block.getInstructions();
 		for (InsnNode insn : list) {
 			if (insn.getType() == InsnType.ARITH
-					&& !insn.contains(AFlag.DECLARE_VAR)) { // TODO: move this modify before ProcessVariable
+					&& !insn.contains(AFlag.ARITH_ONEARG)
+					&& !insn.contains(AFlag.DECLARE_VAR)) {
 				RegisterArg res = insn.getResult();
 				InsnArg arg = insn.getArg(0);
 				boolean replace = false;
@@ -166,9 +191,90 @@ public class PrepareForCodeGen extends AbstractVisitor {
 					replace = res.sameCodeVar(regArg);
 				}
 				if (replace) {
+					insn.setResult(null);
 					insn.add(AFlag.ARITH_ONEARG);
 				}
 			}
+		}
+	}
+
+	/**
+	 * Check that 'super' or 'this' call in constructor is a first instruction.
+	 * Otherwise move to top and add a warning if code breaks.
+	 */
+	private void moveConstructorInConstructor(MethodNode mth) {
+		if (mth.isConstructor()) {
+			ConstructorInsn constrInsn = searchConstructorCall(mth);
+			if (constrInsn != null && !constrInsn.contains(AFlag.DONT_GENERATE)) {
+				Region oldRootRegion = mth.getRegion();
+				boolean firstInsn = BlockUtils.isFirstInsn(mth, constrInsn);
+				DeclareVariablesAttr declVarsAttr = oldRootRegion.get(AType.DECLARE_VARIABLES);
+				if (firstInsn && declVarsAttr == null) {
+					// move not needed
+					return;
+				}
+
+				// move constructor instruction to new root region
+				String callType = constrInsn.getCallType().toString().toLowerCase();
+				BlockNode blockByInsn = BlockUtils.getBlockByInsn(mth, constrInsn);
+				if (blockByInsn == null) {
+					mth.addWarn("Failed to move " + callType + " instruction to top");
+					return;
+				}
+				InsnList.remove(blockByInsn, constrInsn);
+
+				Region region = new Region(null);
+				region.add(new InsnContainer(Collections.singletonList(constrInsn)));
+				region.add(oldRootRegion);
+				mth.setRegion(region);
+
+				if (!firstInsn) {
+					Set<RegisterArg> regArgs = new HashSet<>();
+					constrInsn.getRegisterArgs(regArgs);
+					regArgs.remove(mth.getThisArg());
+					regArgs.removeAll(mth.getArgRegs());
+					if (!regArgs.isEmpty()) {
+						mth.addWarn("Illegal instructions before constructor call");
+					} else {
+						mth.addComment("JADX INFO: " + callType + " call moved to the top of the method (can break code semantics)");
+					}
+				}
+			}
+		}
+	}
+
+	@Nullable
+	private ConstructorInsn searchConstructorCall(MethodNode mth) {
+		for (BlockNode block : mth.getBasicBlocks()) {
+			for (InsnNode insn : block.getInstructions()) {
+				InsnType insnType = insn.getType();
+				if (insnType == InsnType.CONSTRUCTOR) {
+					ConstructorInsn constrInsn = (ConstructorInsn) insn;
+					if (constrInsn.isSuper() || constrInsn.isThis()) {
+						return constrInsn;
+					}
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Use source line from top method
+	 */
+	private void setClassSourceLine(ClassNode cls) {
+		for (ClassNode innerClass : cls.getInnerClasses()) {
+			setClassSourceLine(innerClass);
+		}
+		int minLine = Stream.of(cls.getMethods(), cls.getInnerClasses(), cls.getFields())
+				.flatMap(Collection::stream)
+				.filter(mth -> !mth.contains(AFlag.DONT_GENERATE))
+				.filter(mth -> mth.getSourceLine() != 0)
+				.mapToInt(LineAttrNode::getSourceLine)
+				.min()
+				.orElse(0);
+		if (minLine != 0) {
+			cls.setSourceLine(minLine - 1);
 		}
 	}
 }

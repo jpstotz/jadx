@@ -6,33 +6,32 @@ import java.io.OutputStream;
 
 import org.junit.jupiter.api.Test;
 
-import jadx.NotYetImplemented;
-import jadx.core.clsp.NClass;
+import jadx.core.clsp.ClspClass;
+import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.tests.api.IntegrationTest;
 
 import static jadx.tests.api.utils.JadxMatchers.containsOne;
-import static jadx.tests.api.utils.JadxMatchers.countString;
 import static org.hamcrest.MatcherAssert.assertThat;
 
 public class TestTryCatchFinally2 extends IntegrationTest {
 
 	public static class TestCls {
-		private NClass[] classes;
+		private ClspClass[] classes;
 
 		public void test(OutputStream output) throws IOException {
 			DataOutputStream out = new DataOutputStream(output);
 			try {
 				out.writeByte(1);
 				out.writeInt(classes.length);
-				for (NClass cls : classes) {
+				for (ClspClass cls : classes) {
 					writeString(out, cls.getName());
 				}
-				for (NClass cls : classes) {
-					NClass[] parents = cls.getParents();
+				for (ClspClass cls : classes) {
+					ArgType[] parents = cls.getParents();
 					out.writeByte(parents.length);
-					for (NClass parent : parents) {
-						out.writeInt(parent.getId());
+					for (ArgType parent : parents) {
+						out.writeInt(parent.getObject().hashCode());
 					}
 				}
 			} finally {
@@ -52,18 +51,9 @@ public class TestTryCatchFinally2 extends IntegrationTest {
 		assertThat(code, containsOne("} finally {"));
 		assertThat(code, containsOne("out.close();"));
 
-		assertThat(code, containsOne("for (NClass parent : parents) {"));
+		assertThat(code, containsOne("for (ArgType parent : parents) {"));
 
-		assertThat(code, containsOne("for (NClass cls : this.classes) {"));
-		assertThat(code, containsOne("for (NClass cls2 : this.classes) {"));
-	}
-
-	@Test
-	@NotYetImplemented
-	public void test2() {
-		ClassNode cls = getClassNode(TestCls.class);
-		String code = cls.getCode().toString();
-
-		assertThat(code, countString(2, "for (NClass cls : classes) {"));
+		assertThat(code, containsOne("for (ClspClass cls : this.classes) {"));
+		assertThat(code, containsOne("for (ClspClass cls2 : this.classes) {"));
 	}
 }

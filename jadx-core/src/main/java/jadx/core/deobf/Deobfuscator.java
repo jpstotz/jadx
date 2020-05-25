@@ -37,6 +37,9 @@ public class Deobfuscator {
 
 	public static final String CLASS_NAME_SEPARATOR = ".";
 	public static final String INNER_CLASS_SEPARATOR = "$";
+	public static final String KOTLIN_METADATA_ANNOTATION = "kotlin.Metadata";
+	public static final String KOTLIN_METADATA_D2_PARAMETER = "d2";
+	public static final String KOTLIN_METADATA_CLASSNAME_REGEX = "(L.*;)";
 
 	private final JadxArgs args;
 	@NotNull
@@ -57,6 +60,7 @@ public class Deobfuscator {
 	private final int maxLength;
 	private final int minLength;
 	private final boolean useSourceNameAsAlias;
+	private final boolean parseKotlinMetadata;
 
 	private int pkgIndex = 0;
 	private int clsIndex = 0;
@@ -70,6 +74,7 @@ public class Deobfuscator {
 		this.minLength = args.getDeobfuscationMinLength();
 		this.maxLength = args.getDeobfuscationMaxLength();
 		this.useSourceNameAsAlias = args.isUseSourceNameAsClassAlias();
+		this.parseKotlinMetadata = args.isParseKotlinMetadata();
 
 		this.deobfPresets = new DeobfPresets(this, deobfMapFile);
 	}
@@ -142,7 +147,7 @@ public class Deobfuscator {
 			}
 			for (MethodInfo mth : o.getMethods()) {
 				if (aliasToUse == null) {
-					if (mth.isRenamed() && !mth.isAliasFromPreset()) {
+					if (mth.hasAlias() && !mth.isAliasFromPreset()) {
 						mth.setAlias(String.format("mo%d%s", id, prepareNamePart(mth.getName())));
 					}
 					aliasToUse = mth.getAlias();
@@ -346,7 +351,7 @@ public class Deobfuscator {
 		ClassInfo classInfo = cls.getClassInfo();
 		String pkgFullName = classInfo.getPackage();
 		PackageNode pkg = getPackageNode(pkgFullName, true);
-		doPkg(pkg, pkgFullName);
+		processPackageFull(pkg, pkgFullName);
 
 		String alias = deobfPresets.getForCls(classInfo);
 		if (alias != null) {
@@ -372,8 +377,38 @@ public class Deobfuscator {
 		return makeClsAlias(cls);
 	}
 
+	public String getPkgAlias(ClassNode cls) {
+		ClassInfo classInfo = cls.getClassInfo();
+		PackageNode pkg = null;
+		DeobfClsInfo deobfClsInfo = clsMap.get(classInfo);
+		if (deobfClsInfo != null) {
+			pkg = deobfClsInfo.getPkg();
+		} else {
+			String fullPkgName = classInfo.getPackage();
+			pkg = getPackageNode(fullPkgName, true);
+			processPackageFull(pkg, fullPkgName);
+		}
+		if (pkg.hasAnyAlias()) {
+			return pkg.getFullAlias();
+		} else {
+			return pkg.getFullName();
+		}
+	}
+
 	private String makeClsAlias(ClassNode cls) {
 		ClassInfo classInfo = cls.getClassInfo();
+
+		String metadataClassName = "";
+		String metadataPackageName = "";
+		if (this.parseKotlinMetadata) {
+			String rawClassName = getRawClassNameFromMetadata(cls);
+			if (rawClassName != null) {
+				metadataClassName = rawClassName.substring(rawClassName.lastIndexOf(".") + 1, rawClassName.length() - 1);
+				if (rawClassName.lastIndexOf(".") != -1) {
+					metadataPackageName = rawClassName.substring(1, rawClassName.lastIndexOf("."));
+				}
+			}
+		}
 		String alias = null;
 
 		if (this.useSourceNameAsAlias) {
@@ -381,12 +416,38 @@ public class Deobfuscator {
 		}
 
 		if (alias == null) {
-			String clsName = classInfo.getShortName();
-			alias = String.format("C%04d%s", clsIndex++, prepareNamePart(clsName));
+			if (metadataClassName.isEmpty()) {
+				String clsName = classInfo.getShortName();
+				alias = String.format("C%04d%s", clsIndex++, prepareNamePart(clsName));
+			} else {
+				alias = metadataClassName;
+			}
 		}
-		PackageNode pkg = getPackageNode(classInfo.getPackage(), true);
+		PackageNode pkg;
+		if (metadataPackageName.isEmpty()) {
+			pkg = getPackageNode(classInfo.getPackage(), true);
+		} else {
+			pkg = getPackageNode(metadataPackageName, true);
+		}
 		clsMap.put(classInfo, new DeobfClsInfo(this, cls, pkg, alias));
 		return alias;
+	}
+
+	@Nullable
+	private String getRawClassNameFromMetadata(ClassNode cls) {
+		if (cls.getAnnotation(KOTLIN_METADATA_ANNOTATION) != null
+				&& cls.getAnnotation(KOTLIN_METADATA_ANNOTATION).getValues().get(KOTLIN_METADATA_D2_PARAMETER) != null
+				&& cls.getAnnotation(KOTLIN_METADATA_ANNOTATION).getValues().get(KOTLIN_METADATA_D2_PARAMETER) instanceof List) {
+			Object rawClassNameObject =
+					((List) cls.getAnnotation(KOTLIN_METADATA_ANNOTATION).getValues().get(KOTLIN_METADATA_D2_PARAMETER)).get(0);
+			if (rawClassNameObject instanceof String) {
+				String rawClassName = ((String) rawClassNameObject).trim().replace("/", ".");
+				if (rawClassName.length() > 1 && rawClassName.matches(KOTLIN_METADATA_CLASSNAME_REGEX)) {
+					return rawClassName;
+				}
+			}
+		}
+		return null;
 	}
 
 	@Nullable
@@ -472,7 +533,7 @@ public class Deobfuscator {
 		return alias;
 	}
 
-	private void doPkg(PackageNode pkg, String fullName) {
+	private void processPackageFull(PackageNode pkg, String fullName) {
 		if (pkgSet.contains(fullName)) {
 			return;
 		}
@@ -482,15 +543,19 @@ public class Deobfuscator {
 		PackageNode parentPkg = pkg.getParentPackage();
 		while (!parentPkg.getName().isEmpty()) {
 			if (!parentPkg.hasAlias()) {
-				doPkg(parentPkg, parentPkg.getFullName());
+				processPackageFull(parentPkg, parentPkg.getFullName());
 			}
 			parentPkg = parentPkg.getParentPackage();
 		}
 
-		String pkgName = pkg.getName();
-		if (!pkg.hasAlias() && shouldRename(pkgName)) {
-			String pkgAlias = String.format("p%03d%s", pkgIndex++, prepareNamePart(pkgName));
-			pkg.setAlias(pkgAlias);
+		if (!pkg.hasAlias()) {
+			String pkgName = pkg.getName();
+			if ((args.isDeobfuscationOn() && shouldRename(pkgName))
+					|| (args.isRenameValid() && !NameMapper.isValidIdentifier(pkgName))
+					|| (args.isRenamePrintable() && !NameMapper.isAllCharsPrintable(pkgName))) {
+				String pkgAlias = String.format("p%03d%s", pkgIndex++, prepareNamePart(pkg.getName()));
+				pkg.setAlias(pkgAlias);
+			}
 		}
 	}
 

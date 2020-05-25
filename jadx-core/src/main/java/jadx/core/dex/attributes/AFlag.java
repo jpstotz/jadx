@@ -1,6 +1,7 @@
 package jadx.core.dex.attributes;
 
 public enum AFlag {
+	MTH_ENTER_BLOCK,
 	TRY_ENTER,
 	TRY_LEAVE,
 
@@ -15,8 +16,13 @@ public enum AFlag {
 	DONT_WRAP,
 	DONT_INLINE,
 	DONT_GENERATE, // process as usual, but don't output to generated code
-	DONT_RENAME, // do not rename during deobfuscation
+	COMMENT_OUT, // process as usual, but comment insn in generated code
 	REMOVE, // can be completely removed
+
+	HIDDEN, // instruction used inside other instruction but not listed in args
+
+	RESTART_CODEGEN,
+	DONT_RENAME, // do not rename during deobfuscation
 	ADDED_TO_REGION,
 
 	FINALLY_INSNS,
@@ -27,6 +33,7 @@ public enum AFlag {
 	ANONYMOUS_CLASS,
 
 	THIS,
+	SUPER,
 
 	/**
 	 * RegisterArg attribute for method arguments
@@ -38,6 +45,11 @@ public enum AFlag {
 	 */
 	IMMUTABLE_TYPE,
 
+	/**
+	 * Force inline instruction with inline assign
+	 */
+	FORCE_ASSIGN_INLINE,
+
 	CUSTOM_DECLARE, // variable for this register don't need declaration
 	DECLARE_VAR,
 
@@ -48,7 +60,13 @@ public enum AFlag {
 
 	FALL_THROUGH,
 
-	EXPLICIT_GENERICS,
+	VARARG_CALL,
+
+	/**
+	 * Use constants with explicit type: cast '(byte) 1' or type letter '7L'
+	 */
+	EXPLICIT_PRIMITIVE_TYPE,
+	EXPLICIT_CAST,
 
 	INCONSISTENT_CODE, // warning about incorrect decompilation
 }

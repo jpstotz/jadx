@@ -1,5 +1,7 @@
 package jadx.core.dex.instructions;
 
+import org.jetbrains.annotations.Nullable;
+
 import com.android.dx.io.instructions.DecodedInstruction;
 
 import jadx.core.dex.info.MethodInfo;
@@ -7,15 +9,14 @@ import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.utils.InsnUtils;
-import jadx.core.utils.Utils;
 
-public class InvokeNode extends InsnNode implements CallMthInterface {
+public final class InvokeNode extends BaseInvokeNode {
 
 	private final InvokeType type;
 	private final MethodInfo mth;
 
 	public InvokeNode(MethodInfo mth, DecodedInstruction insn, InvokeType type, boolean isRange, int resReg) {
-		super(InsnType.INVOKE, mth.getArgsCount() + (type != InvokeType.STATIC ? 1 : 0));
+		super(InsnType.INVOKE, mth.getArgsCount() + (type == InvokeType.STATIC ? 0 : 1));
 		this.mth = mth;
 		this.type = type;
 
@@ -52,6 +53,24 @@ public class InvokeNode extends InsnNode implements CallMthInterface {
 	}
 
 	@Override
+	@Nullable
+	public InsnArg getInstanceArg() {
+		if (type != InvokeType.STATIC && getArgsCount() > 0) {
+			return getArg(0);
+		}
+		return null;
+	}
+
+	@Override
+	public boolean isStaticCall() {
+		return type == InvokeType.STATIC;
+	}
+
+	public int getFirstArgOffset() {
+		return type == InvokeType.STATIC ? 0 : 1;
+	}
+
+	@Override
 	public InsnNode copy() {
 		return copyCommonParams(new InvokeNode(mth, type, getArgsCount()));
 	}
@@ -70,11 +89,6 @@ public class InvokeNode extends InsnNode implements CallMthInterface {
 
 	@Override
 	public String toString() {
-		return InsnUtils.formatOffset(offset) + ": "
-				+ InsnUtils.insnTypeToString(insnType)
-				+ (getResult() == null ? "" : getResult() + " = ")
-				+ Utils.listToString(getArguments())
-				+ ' ' + mth
-				+ " type: " + type;
+		return super.toString() + " type: " + type + " call: " + mth;
 	}
 }

@@ -20,11 +20,12 @@ import jadx.core.dex.visitors.JadxVisitor;
 import jadx.core.dex.visitors.ModVisitor;
 import jadx.core.utils.BlockUtils;
 import jadx.core.utils.InsnList;
+import jadx.core.utils.InsnRemover;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 @JadxVisitor(
 		name = "CodeShrinkVisitor",
-		desc = "Inline variables for make code smaller",
+		desc = "Inline variables to make code smaller",
 		runAfter = { ModVisitor.class }
 )
 public class CodeShrinkVisitor extends AbstractVisitor {
@@ -57,66 +58,94 @@ public class CodeShrinkVisitor extends AbstractVisitor {
 		List<WrapInfo> wrapList = new ArrayList<>();
 		for (ArgsInfo argsInfo : argsList) {
 			List<RegisterArg> args = argsInfo.getArgs();
-			if (args.isEmpty()) {
-				continue;
-			}
-			ListIterator<RegisterArg> it = args.listIterator(args.size());
-			while (it.hasPrevious()) {
-				RegisterArg arg = it.previous();
-				// if (arg.getName() != null) {
-				// continue;
-				// }
-				SSAVar sVar = arg.getSVar();
-				// allow inline only one use arg
-				if (sVar == null
-						|| sVar.getVariableUseCount() != 1
-						|| sVar.contains(AFlag.DONT_INLINE)) {
-					continue;
-				}
-				InsnNode assignInsn = sVar.getAssign().getParentInsn();
-				if (assignInsn == null || assignInsn.contains(AFlag.DONT_INLINE)) {
-					continue;
-				}
-				List<RegisterArg> useList = sVar.getUseList();
-				if (!useList.isEmpty()) {
-					InsnNode parentInsn = useList.get(0).getParentInsn();
-					if (parentInsn != null && parentInsn.contains(AFlag.DONT_GENERATE)) {
-						continue;
-					}
-				}
-
-				int assignPos = insnList.getIndex(assignInsn);
-				if (assignPos != -1) {
-					WrapInfo wrapInfo = argsInfo.checkInline(assignPos, arg);
-					if (wrapInfo != null) {
-						wrapList.add(wrapInfo);
-					}
-				} else {
-					// another block
-					BlockNode assignBlock = BlockUtils.getBlockByInsn(mth, assignInsn);
-					if (assignBlock != null
-							&& assignInsn != arg.getParentInsn()
-							&& canMoveBetweenBlocks(assignInsn, assignBlock, block, argsInfo.getInsn())) {
-						inline(arg, assignInsn, assignBlock);
-					}
+			if (!args.isEmpty()) {
+				ListIterator<RegisterArg> it = args.listIterator(args.size());
+				while (it.hasPrevious()) {
+					RegisterArg arg = it.previous();
+					checkInline(mth, block, insnList, wrapList, argsInfo, arg);
 				}
 			}
 		}
 		if (!wrapList.isEmpty()) {
 			for (WrapInfo wrapInfo : wrapList) {
-				inline(wrapInfo.getArg(), wrapInfo.getInsn(), block);
+				inline(mth, wrapInfo.getArg(), wrapInfo.getInsn(), block);
 			}
 		}
 	}
 
-	private static boolean inline(RegisterArg arg, InsnNode insn, BlockNode block) {
+	private static void checkInline(MethodNode mth, BlockNode block, InsnList insnList,
+			List<WrapInfo> wrapList, ArgsInfo argsInfo, RegisterArg arg) {
+		SSAVar sVar = arg.getSVar();
+		if (sVar == null || sVar.getAssign().contains(AFlag.DONT_INLINE)) {
+			return;
+		}
+		InsnNode assignInsn = sVar.getAssign().getParentInsn();
+		if (assignInsn == null
+				|| assignInsn.contains(AFlag.DONT_INLINE)
+				|| assignInsn.contains(AFlag.WRAPPED)) {
+			return;
+		}
+		// allow inline only one use arg
+		boolean assignInline = assignInsn.contains(AFlag.FORCE_ASSIGN_INLINE);
+		if (!assignInline && sVar.getVariableUseCount() != 1) {
+			return;
+		}
+		List<RegisterArg> useList = sVar.getUseList();
+		if (!useList.isEmpty()) {
+			InsnNode parentInsn = useList.get(0).getParentInsn();
+			if (parentInsn != null && parentInsn.contains(AFlag.DONT_GENERATE)) {
+				return;
+			}
+		}
+
+		int assignPos = insnList.getIndex(assignInsn);
+		if (assignPos != -1) {
+			WrapInfo wrapInfo = argsInfo.checkInline(assignPos, arg);
+			if (wrapInfo != null) {
+				wrapList.add(wrapInfo);
+			}
+		} else {
+			// another block
+			BlockNode assignBlock = BlockUtils.getBlockByInsn(mth, assignInsn);
+			if (assignBlock != null
+					&& assignInsn != arg.getParentInsn()
+					&& canMoveBetweenBlocks(assignInsn, assignBlock, block, argsInfo.getInsn())) {
+				if (assignInline) {
+					assignInline(mth, arg, assignInsn, assignBlock);
+				} else {
+					inline(mth, arg, assignInsn, assignBlock);
+				}
+			}
+		}
+	}
+
+	private static boolean assignInline(MethodNode mth, RegisterArg arg, InsnNode assignInsn, BlockNode assignBlock) {
+		RegisterArg useArg = arg.getSVar().getUseList().get(0);
+		InsnNode useInsn = useArg.getParentInsn();
+		if (useInsn == null || useInsn.contains(AFlag.DONT_GENERATE)) {
+			return false;
+		}
+		if (!InsnRemover.removeWithoutUnbind(mth, assignBlock, assignInsn)) {
+			return false;
+		}
+		InsnArg replaceArg = InsnArg.wrapInsnIntoArg(assignInsn);
+		useInsn.replaceArg(useArg, replaceArg);
+		return true;
+	}
+
+	private static boolean inline(MethodNode mth, RegisterArg arg, InsnNode insn, BlockNode block) {
 		InsnNode parentInsn = arg.getParentInsn();
 		if (parentInsn != null && parentInsn.getType() == InsnType.RETURN) {
 			parentInsn.setSourceLine(insn.getSourceLine());
 		}
-		boolean replaced = arg.wrapInstruction(insn) != null;
+		if (insn.contains(AFlag.FORCE_ASSIGN_INLINE)) {
+			return assignInline(mth, arg, insn, block);
+		}
+		// just move instruction into arg, don't unbind/copy/duplicate
+		InsnArg wrappedArg = arg.wrapInstruction(mth, insn, false);
+		boolean replaced = wrappedArg != null;
 		if (replaced) {
-			InsnList.remove(block, insn);
+			InsnRemover.removeWithoutUnbind(mth, block, insn);
 		}
 		return replaced;
 	}
@@ -145,6 +174,14 @@ public class CodeShrinkVisitor extends AbstractVisitor {
 		pathsBlocks.remove(assignBlock);
 		pathsBlocks.remove(useBlock);
 		for (BlockNode block : pathsBlocks) {
+			if (block.contains(AFlag.DONT_GENERATE)) {
+				if (BlockUtils.checkLastInsnType(block, InsnType.MONITOR_EXIT)) {
+					// don't move from synchronized block
+					return false;
+				}
+				// skip checks for not generated blocks
+				continue;
+			}
 			for (InsnNode insn : block.getInstructions()) {
 				if (!insn.canReorder() || ArgsInfo.usedArgAssign(insn, args)) {
 					return false;

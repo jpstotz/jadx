@@ -3,6 +3,7 @@ package jadx.core.dex.instructions;
 import java.util.Arrays;
 import java.util.List;
 
+import jadx.core.codegen.CodeWriter;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.InsnNode;
@@ -15,16 +16,22 @@ public class SwitchNode extends TargetInsnNode {
 	private final Object[] keys;
 	private final int[] targets;
 	private final int def; // next instruction
+	private final boolean packed; // type of switch insn, if true can contain filler keys
 
 	private BlockNode[] targetBlocks;
 	private BlockNode defTargetBlock;
 
-	public SwitchNode(InsnArg arg, Object[] keys, int[] targets, int def) {
+	public SwitchNode(InsnArg arg, Object[] keys, int[] targets, int def, boolean packed) {
+		this(keys, targets, def, packed);
+		addArg(arg);
+	}
+
+	private SwitchNode(Object[] keys, int[] targets, int def, boolean packed) {
 		super(InsnType.SWITCH, 1);
 		this.keys = keys;
 		this.targets = targets;
 		this.def = def;
-		addArg(arg);
+		this.packed = packed;
 	}
 
 	public int getCasesCount() {
@@ -41,6 +48,10 @@ public class SwitchNode extends TargetInsnNode {
 
 	public int getDefaultCaseOffset() {
 		return def;
+	}
+
+	public boolean isPacked() {
+		return packed;
 	}
 
 	public BlockNode[] getTargetBlocks() {
@@ -64,6 +75,9 @@ public class SwitchNode extends TargetInsnNode {
 
 	@Override
 	public boolean replaceTargetBlock(BlockNode origin, BlockNode replace) {
+		if (targetBlocks == null) {
+			return false;
+		}
 		int count = 0;
 		int len = targetBlocks.length;
 		for (int i = 0; i < len; i++) {
@@ -94,16 +108,35 @@ public class SwitchNode extends TargetInsnNode {
 	}
 
 	@Override
+	public InsnNode copy() {
+		SwitchNode copy = new SwitchNode(keys, targets, def, packed);
+		copy.targetBlocks = targetBlocks;
+		copy.defTargetBlock = defTargetBlock;
+		return copyCommonParams(copy);
+	}
+
+	@Override
 	public String toString() {
-		StringBuilder targ = new StringBuilder();
-		targ.append('[');
-		for (int i = 0; i < targets.length; i++) {
-			targ.append(InsnUtils.formatOffset(targets[i]));
-			if (i < targets.length - 1) {
-				targ.append(", ");
+		StringBuilder sb = new StringBuilder();
+		sb.append(super.toString());
+		if (targetBlocks == null) {
+			for (int i = 0; i < keys.length; i++) {
+				sb.append(CodeWriter.NL);
+				sb.append("  case ").append(keys[i]).append(": goto ").append(InsnUtils.formatOffset(targets[i]));
+			}
+			if (def != -1) {
+				sb.append(CodeWriter.NL);
+				sb.append("  default: goto ").append(InsnUtils.formatOffset(def));
+			}
+		} else {
+			for (int i = 0; i < keys.length; i++) {
+				sb.append(CodeWriter.NL);
+				sb.append("  case ").append(keys[i]).append(": goto ").append(targetBlocks[i]);
+			}
+			if (def != -1) {
+				sb.append(CodeWriter.NL).append("  default: goto ").append(defTargetBlock);
 			}
 		}
-		targ.append(']');
-		return super.toString() + " k:" + Arrays.toString(keys) + " t:" + targ;
+		return sb.toString();
 	}
 }

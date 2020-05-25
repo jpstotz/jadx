@@ -5,11 +5,15 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
+import jadx.core.dex.attributes.AttrNode;
+import jadx.core.dex.attributes.annotations.Annotation;
+import jadx.core.dex.attributes.annotations.AnnotationsList;
 import jadx.core.dex.attributes.nodes.FieldReplaceAttr;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.info.MethodInfo;
@@ -40,10 +44,11 @@ import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.regions.conditions.IfCondition;
 import jadx.core.dex.trycatch.ExcHandlerAttr;
 import jadx.core.dex.trycatch.ExceptionHandler;
+import jadx.core.dex.visitors.regions.variables.ProcessVariables;
 import jadx.core.dex.visitors.shrink.CodeShrinkVisitor;
-import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.InsnRemover;
 import jadx.core.utils.InsnUtils;
+import jadx.core.utils.exceptions.JadxException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 import static jadx.core.utils.BlockUtils.replaceInsn;
@@ -55,29 +60,42 @@ import static jadx.core.utils.BlockUtils.replaceInsn;
 @JadxVisitor(
 		name = "ModVisitor",
 		desc = "Modify method instructions",
-		runBefore = CodeShrinkVisitor.class
+		runBefore = {
+				CodeShrinkVisitor.class,
+				ProcessVariables.class
+		}
 )
 public class ModVisitor extends AbstractVisitor {
 	private static final Logger LOG = LoggerFactory.getLogger(ModVisitor.class);
+
+	private static final long DOUBLE_TO_BITS = Double.doubleToLongBits(1);
+	private static final long FLOAT_TO_BITS = Float.floatToIntBits(1);
+
+	@Override
+	public boolean visit(ClassNode cls) throws JadxException {
+		replaceConstInAnnotations(cls);
+		return true;
+	}
 
 	@Override
 	public void visit(MethodNode mth) {
 		if (mth.isNoCode()) {
 			return;
 		}
-
 		InsnRemover remover = new InsnRemover(mth);
 		replaceStep(mth, remover);
 		removeStep(mth, remover);
+		iterativeRemoveStep(mth);
 	}
 
 	private static void replaceStep(MethodNode mth, InsnRemover remover) {
 		ClassNode parentClass = mth.getParentClass();
 		for (BlockNode block : mth.getBasicBlocks()) {
 			remover.setBlock(block);
-			int size = block.getInstructions().size();
+			List<InsnNode> insnsList = block.getInstructions();
+			int size = insnsList.size();
 			for (int i = 0; i < size; i++) {
-				InsnNode insn = block.getInstructions().get(i);
+				InsnNode insn = insnsList.get(i);
 				switch (insn.getType()) {
 					case CONSTRUCTOR:
 						processAnonymousConstructor(mth, ((ConstructorInsn) insn));
@@ -85,96 +103,42 @@ public class ModVisitor extends AbstractVisitor {
 
 					case CONST:
 					case CONST_STR:
-					case CONST_CLASS: {
-						FieldNode f;
-						if (insn.getType() == InsnType.CONST_STR) {
-							String s = ((ConstStringNode) insn).getString();
-							f = parentClass.getConstField(s);
-						} else if (insn.getType() == InsnType.CONST_CLASS) {
-							ArgType t = ((ConstClassNode) insn).getClsType();
-							f = parentClass.getConstField(t);
-						} else {
-							f = parentClass.getConstFieldByLiteralArg((LiteralArg) insn.getArg(0));
-						}
-						if (f != null) {
-							InsnNode inode = new IndexInsnNode(InsnType.SGET, f.getFieldInfo(), 0);
-							inode.setResult(insn.getResult());
-							replaceInsn(block, i, inode);
-						}
+					case CONST_CLASS:
+						replaceConst(mth, parentClass, block, i, insn);
 						break;
-					}
 
 					case SWITCH:
-						SwitchNode sn = (SwitchNode) insn;
-						for (int k = 0; k < sn.getCasesCount(); k++) {
-							FieldNode f = parentClass.getConstField(sn.getKeys()[k]);
-							if (f != null) {
-								sn.getKeys()[k] = f;
-							}
-						}
+						replaceConstKeys(parentClass, (SwitchNode) insn);
 						break;
 
 					case NEW_ARRAY:
 						// replace with filled array if 'fill-array' is next instruction
-						int next = i + 1;
-						if (next < size) {
-							InsnNode ni = block.getInstructions().get(next);
-							if (ni.getType() == InsnType.FILL_ARRAY) {
-								InsnNode filledArr = makeFilledArrayInsn(mth, (NewArrayNode) insn, (FillArrayNode) ni);
-								if (filledArr != null) {
-									replaceInsn(block, i, filledArr);
-									remover.addAndUnbind(ni);
-								}
+						NewArrayNode newArrInsn = (NewArrayNode) insn;
+						InsnNode nextInsn = getFirstUseSkipMove(insn.getResult());
+						if (nextInsn != null && nextInsn.getType() == InsnType.FILL_ARRAY) {
+							FillArrayNode fillArrInsn = (FillArrayNode) nextInsn;
+							if (checkArrSizes(mth, newArrInsn, fillArrInsn)) {
+								InsnNode filledArr = makeFilledArrayInsn(mth, newArrInsn, fillArrInsn);
+								replaceInsn(mth, block, i, filledArr);
+								remover.addAndUnbind(nextInsn);
 							}
 						}
 						break;
 
 					case MOVE_EXCEPTION:
-						processMoveException(block, insn, remover);
+						processMoveException(mth, block, insn, remover);
 						break;
 
 					case ARITH:
-						ArithNode arithNode = (ArithNode) insn;
-						if (arithNode.getArgsCount() == 2) {
-							InsnArg litArg = arithNode.getArg(1);
-							if (litArg.isLiteral()) {
-								FieldNode f = parentClass.getConstFieldByLiteralArg((LiteralArg) litArg);
-								if (f != null) {
-									InsnNode fGet = new IndexInsnNode(InsnType.SGET, f.getFieldInfo(), 0);
-									insn.replaceArg(litArg, InsnArg.wrapArg(fGet));
-								}
-							}
-						}
+						processArith(mth, parentClass, (ArithNode) insn);
 						break;
 
 					case CHECK_CAST:
-						InsnArg castArg = insn.getArg(0);
-						ArgType castType = (ArgType) ((IndexInsnNode) insn).getIndex();
-						if (!ArgType.isCastNeeded(mth.dex(), castArg.getType(), castType)
-								|| isCastDuplicate((IndexInsnNode) insn)) {
-							InsnNode insnNode = new InsnNode(InsnType.MOVE, 1);
-							insnNode.setResult(insn.getResult());
-							insnNode.addArg(castArg);
-							replaceInsn(block, i, insnNode);
-						}
+						removeRedundantCast(mth, block, i, (IndexInsnNode) insn);
 						break;
 
 					case CAST:
-						// replace boolean to (byte/char/short/long/double/float) cast with ternary
-						if (insn.getArg(0).getType() == ArgType.BOOLEAN) {
-							ArgType type = insn.getResult().getType();
-							if (type.isPrimitive()) {
-								IfNode ifNode = new IfNode(IfOp.EQ, -1, insn.getArg(0), LiteralArg.TRUE);
-								IfCondition condition = IfCondition.fromIfNode(ifNode);
-								InsnArg zero = new LiteralArg(0, type);
-								InsnArg one = new LiteralArg(
-										type == ArgType.DOUBLE ? Double.doubleToLongBits(1)
-												: type == ArgType.FLOAT ? Float.floatToIntBits(1) : 1,
-										type);
-								TernaryInsn ternary = new TernaryInsn(condition, insn.getResult(), one, zero);
-								replaceInsn(block, i, ternary);
-							}
-						}
+						fixPrimitiveCast(mth, block, i, insn);
 						break;
 
 					default:
@@ -182,6 +146,132 @@ public class ModVisitor extends AbstractVisitor {
 				}
 			}
 			remover.perform();
+		}
+	}
+
+	private static void replaceConstKeys(ClassNode parentClass, SwitchNode insn) {
+		for (int k = 0; k < insn.getCasesCount(); k++) {
+			FieldNode f = parentClass.getConstField(insn.getKeys()[k]);
+			if (f != null) {
+				insn.getKeys()[k] = f;
+			}
+		}
+	}
+
+	private static void fixPrimitiveCast(MethodNode mth, BlockNode block, int i, InsnNode insn) {
+		// replace boolean to (byte/char/short/long/double/float) cast with ternary
+		InsnArg castArg = insn.getArg(0);
+		if (castArg.getType() == ArgType.BOOLEAN) {
+			ArgType type = insn.getResult().getType();
+			if (type.isPrimitive()) {
+				InsnArg zero = new LiteralArg(0, type);
+				long litVal = 1;
+				if (type == ArgType.DOUBLE) {
+					litVal = DOUBLE_TO_BITS;
+				} else if (type == ArgType.FLOAT) {
+					litVal = FLOAT_TO_BITS;
+				}
+				InsnArg one = new LiteralArg(litVal, type);
+
+				IfNode ifNode = new IfNode(IfOp.EQ, -1, castArg, LiteralArg.TRUE);
+				IfCondition condition = IfCondition.fromIfNode(ifNode);
+				TernaryInsn ternary = new TernaryInsn(condition, insn.getResult(), one, zero);
+				replaceInsn(mth, block, i, ternary);
+			}
+		}
+	}
+
+	private void replaceConstInAnnotations(ClassNode cls) {
+		if (cls.root().getArgs().isReplaceConsts()) {
+			replaceConstsInAnnotationForAttrNode(cls, cls);
+			cls.getFields().forEach(f -> replaceConstsInAnnotationForAttrNode(cls, f));
+			cls.getMethods().forEach(m -> replaceConstsInAnnotationForAttrNode(cls, m));
+		}
+	}
+
+	private void replaceConstsInAnnotationForAttrNode(ClassNode parentCls, AttrNode attrNode) {
+		AnnotationsList annotationsList = attrNode.get(AType.ANNOTATION_LIST);
+		if (annotationsList == null) {
+			return;
+		}
+		for (Annotation annotation : annotationsList.getAll()) {
+			if (annotation.getVisibility() == Annotation.Visibility.SYSTEM) {
+				continue;
+			}
+			for (Map.Entry<String, Object> entry : annotation.getValues().entrySet()) {
+				entry.setValue(replaceConstValue(parentCls, entry.getValue()));
+			}
+		}
+	}
+
+	@SuppressWarnings({ "unchecked", "rawtypes" })
+	private Object replaceConstValue(ClassNode parentCls, @Nullable Object value) {
+		if (value instanceof List) {
+			List listVal = (List) value;
+			if (!listVal.isEmpty()) {
+				listVal.replaceAll(v -> replaceConstValue(parentCls, v));
+			}
+			return listVal;
+		}
+		FieldNode constField = parentCls.getConstField(value);
+		if (constField != null) {
+			return constField.getFieldInfo();
+		}
+		return value;
+	}
+
+	private static void replaceConst(MethodNode mth, ClassNode parentClass, BlockNode block, int i, InsnNode insn) {
+		FieldNode f;
+		if (insn.getType() == InsnType.CONST_STR) {
+			String s = ((ConstStringNode) insn).getString();
+			f = parentClass.getConstField(s);
+		} else if (insn.getType() == InsnType.CONST_CLASS) {
+			ArgType t = ((ConstClassNode) insn).getClsType();
+			f = parentClass.getConstField(t);
+		} else {
+			f = parentClass.getConstFieldByLiteralArg((LiteralArg) insn.getArg(0));
+		}
+		if (f != null) {
+			InsnNode inode = new IndexInsnNode(InsnType.SGET, f.getFieldInfo(), 0);
+			inode.setResult(insn.getResult());
+			replaceInsn(mth, block, i, inode);
+		}
+	}
+
+	private static void processArith(MethodNode mth, ClassNode parentClass, ArithNode arithNode) {
+		if (arithNode.getArgsCount() != 2) {
+			throw new JadxRuntimeException("Invalid args count in insn: " + arithNode);
+		}
+		InsnArg litArg = arithNode.getArg(1);
+		if (litArg.isLiteral()) {
+			FieldNode f = parentClass.getConstFieldByLiteralArg((LiteralArg) litArg);
+			if (f != null) {
+				InsnNode fGet = new IndexInsnNode(InsnType.SGET, f.getFieldInfo(), 0);
+				arithNode.replaceArg(litArg, InsnArg.wrapArg(fGet));
+			}
+		}
+	}
+
+	private static boolean checkArrSizes(MethodNode mth, NewArrayNode newArrInsn, FillArrayNode fillArrInsn) {
+		int dataSize = fillArrInsn.getSize();
+		InsnArg arrSizeArg = newArrInsn.getArg(0);
+		Object value = InsnUtils.getConstValueByArg(mth.dex(), arrSizeArg);
+		if (value instanceof LiteralArg) {
+			long literal = ((LiteralArg) value).getLiteral();
+			return dataSize == (int) literal;
+		}
+		return false;
+	}
+
+	private static void removeRedundantCast(MethodNode mth, BlockNode block, int i, IndexInsnNode insn) {
+		InsnArg castArg = insn.getArg(0);
+		ArgType castType = (ArgType) insn.getIndex();
+		if (!ArgType.isCastNeeded(mth.root(), castArg.getType(), castType)
+				|| isCastDuplicate(insn)) {
+			InsnNode insnNode = new InsnNode(InsnType.MOVE, 1);
+			insnNode.setResult(insn.getResult());
+			insnNode.addArg(castArg);
+			replaceInsn(mth, block, i, insnNode);
 		}
 	}
 
@@ -215,11 +305,41 @@ public class ModVisitor extends AbstractVisitor {
 						break;
 
 					default:
+						if (insn.contains(AFlag.REMOVE)) {
+							remover.addAndUnbind(insn);
+						}
 						break;
 				}
 			}
 			remover.perform();
 		}
+	}
+
+	private static void iterativeRemoveStep(MethodNode mth) {
+		boolean changed;
+		do {
+			changed = false;
+			for (BlockNode block : mth.getBasicBlocks()) {
+				for (InsnNode insn : block.getInstructions()) {
+					if (insn.getType() == InsnType.MOVE
+							&& insn.isAttrStorageEmpty()
+							&& isResultArgNotUsed(insn)) {
+						InsnRemover.remove(mth, block, insn);
+						changed = true;
+						break;
+					}
+				}
+			}
+		} while (changed);
+	}
+
+	private static boolean isResultArgNotUsed(InsnNode insn) {
+		RegisterArg result = insn.getResult();
+		if (result != null) {
+			SSAVar ssaVar = result.getSVar();
+			return ssaVar.getUseCount() == 0;
+		}
+		return false;
 	}
 
 	private static void processAnonymousConstructor(MethodNode mth, ConstructorInsn co) {
@@ -237,7 +357,7 @@ public class ModVisitor extends AbstractVisitor {
 			return;
 		}
 		Map<InsnArg, FieldNode> argsMap = getArgsToFieldsMapping(callMthNode, co);
-		if (argsMap.isEmpty() && !callMthNode.getArguments(true).isEmpty()) {
+		if (argsMap.isEmpty() && !callMthNode.getArgRegs().isEmpty()) {
 			return;
 		}
 
@@ -254,7 +374,7 @@ public class ModVisitor extends AbstractVisitor {
 				SSAVar sVar = reg.getSVar();
 				if (sVar != null) {
 					sVar.getCodeVar().setFinal(true);
-					sVar.add(AFlag.DONT_INLINE);
+					sVar.getAssign().add(AFlag.DONT_INLINE);
 				}
 				reg.add(AFlag.SKIP_ARG);
 			}
@@ -266,7 +386,7 @@ public class ModVisitor extends AbstractVisitor {
 		MethodInfo callMth = callMthNode.getMethodInfo();
 		ClassNode cls = callMthNode.getParentClass();
 		ClassNode parentClass = cls.getParentClass();
-		List<RegisterArg> argList = callMthNode.getArguments(false);
+		List<RegisterArg> argList = callMthNode.getArgRegs();
 		int startArg = 0;
 		if (callMth.getArgsCount() != 0 && callMth.getArgumentsTypes().get(0).equals(parentClass.getClassInfo().getType())) {
 			startArg = 1;
@@ -314,6 +434,28 @@ public class ModVisitor extends AbstractVisitor {
 		return parentInsn;
 	}
 
+	/**
+	 * Return first usage instruction for arg.
+	 * If used only once try to follow move chain
+	 */
+	@Nullable
+	private static InsnNode getFirstUseSkipMove(RegisterArg arg) {
+		SSAVar sVar = arg.getSVar();
+		int useCount = sVar.getUseCount();
+		if (useCount == 0) {
+			return null;
+		}
+		RegisterArg useArg = sVar.getUseList().get(0);
+		InsnNode parentInsn = useArg.getParentInsn();
+		if (parentInsn == null) {
+			return null;
+		}
+		if (useCount == 1 && parentInsn.getType() == InsnType.MOVE) {
+			return getFirstUseSkipMove(parentInsn.getResult());
+		}
+		return parentInsn;
+	}
+
 	private static InsnNode makeFilledArrayInsn(MethodNode mth, NewArrayNode newArrayNode, FillArrayNode insn) {
 		ArgType insnArrayType = newArrayNode.getArrayType();
 		ArgType insnElementType = insnArrayType.getArrayElement();
@@ -324,9 +466,8 @@ public class ModVisitor extends AbstractVisitor {
 			elType = insnElementType;
 		}
 		if (!elType.equals(insnElementType) && !insnArrayType.equals(ArgType.OBJECT)) {
-			ErrorsCounter.methodWarn(mth,
-					"Incorrect type for fill-array insn " + InsnUtils.formatOffset(insn.getOffset())
-							+ ", element type: " + elType + ", insn element type: " + insnElementType);
+			mth.addWarn("Incorrect type for fill-array insn " + InsnUtils.formatOffset(insn.getOffset())
+					+ ", element type: " + elType + ", insn element type: " + insnElementType);
 		}
 		if (!elType.isTypeKnown()) {
 			LOG.warn("Unknown array element type: {} in mth: {}", elType, mth);
@@ -351,7 +492,7 @@ public class ModVisitor extends AbstractVisitor {
 		return filledArr;
 	}
 
-	private static void processMoveException(BlockNode block, InsnNode insn, InsnRemover remover) {
+	private static void processMoveException(MethodNode mth, BlockNode block, InsnNode insn, InsnRemover remover) {
 		ExcHandlerAttr excHandlerAttr = block.get(AType.EXC_HANDLER);
 		if (excHandlerAttr == null) {
 			return;
@@ -376,7 +517,7 @@ public class ModVisitor extends AbstractVisitor {
 			NamedArg namedArg = new NamedArg(name, type);
 			moveInsn.addArg(namedArg);
 			excHandler.setArg(namedArg);
-			replaceInsn(block, 0, moveInsn);
+			replaceInsn(mth, block, 0, moveInsn);
 		}
 	}
 }

@@ -1,23 +1,24 @@
-apply plugin: 'application'
-
-mainClassName = 'jadx.cli.JadxCLI'
-applicationName = 'jadx'
+plugins {
+	id 'application'
+}
 
 dependencies {
-    compile(project(':jadx-core'))
-    compile 'com.beust:jcommander:1.74'
-    compile 'ch.qos.logback:logback-classic:1.2.3'
+	compile(project(':jadx-core'))
+	compile 'com.beust:jcommander:1.78'
+	compile 'ch.qos.logback:logback-classic:1.2.3'
+}
+
+application {
+	applicationName = 'jadx'
+	mainClassName = 'jadx.cli.JadxCLI'
+	applicationDefaultJvmArgs = ['-Xms128M', '-Xmx4g', '-XX:+UseG1GC']
 }
 
 applicationDistribution.with {
-    into('') {
-        from '../.'
-        include 'README.md'
-        include 'NOTICE'
-        include 'LICENSE'
-    }
-}
-
-startScripts {
-    defaultJvmOpts = ['-Xms128M', '-Xmx4g']
+	into('') {
+		from '../.'
+		include 'README.md'
+		include 'NOTICE'
+		include 'LICENSE'
+	}
 }

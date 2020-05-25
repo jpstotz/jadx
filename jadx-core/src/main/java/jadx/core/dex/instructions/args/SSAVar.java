@@ -9,23 +9,24 @@ import java.util.Set;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
-import jadx.core.dex.attributes.AttrNode;
 import jadx.core.dex.attributes.nodes.RegDebugInfoAttr;
+import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.PhiInsn;
+import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.visitors.typeinference.TypeInfo;
 import jadx.core.utils.StringUtils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
-public class SSAVar extends AttrNode {
+public class SSAVar {
 	private final int regNum;
 	private final int version;
 
 	private RegisterArg assign;
 	private final List<RegisterArg> useList = new ArrayList<>(2);
-	@Nullable
-	private PhiInsn usedInPhi;
+	private List<PhiInsn> usedInPhi = null;
 
 	private TypeInfo typeInfo = new TypeInfo();
 
@@ -65,8 +66,29 @@ public class SSAVar extends AttrNode {
 		return useList.size();
 	}
 
-	// must be used only from RegisterArg#setType()
-	void setType(ArgType type) {
+	@Nullable
+	public ArgType getImmutableType() {
+		if (assign.contains(AFlag.IMMUTABLE_TYPE)) {
+			return assign.getInitType();
+		}
+		for (RegisterArg useArg : useList) {
+			if (useArg.contains(AFlag.IMMUTABLE_TYPE)) {
+				return useArg.getInitType();
+			}
+		}
+		return null;
+	}
+
+	public boolean isTypeImmutable() {
+		return getImmutableType() != null;
+	}
+
+	public void setType(ArgType type) {
+		ArgType imType = getImmutableType();
+		if (imType != null && !imType.equals(type)) {
+			throw new JadxRuntimeException("Can't change immutable type " + imType + " to " + type + " for " + this);
+		}
+
 		typeInfo.setType(type);
 		if (codeVar != null) {
 			codeVar.setType(type);
@@ -85,24 +107,60 @@ public class SSAVar extends AttrNode {
 		useList.removeIf(registerArg -> registerArg == arg);
 	}
 
-	public void setUsedInPhi(@Nullable PhiInsn usedInPhi) {
-		this.usedInPhi = usedInPhi;
+	public void addUsedInPhi(PhiInsn phiInsn) {
+		if (usedInPhi == null) {
+			usedInPhi = new ArrayList<>(1);
+		}
+		usedInPhi.add(phiInsn);
+	}
+
+	public void removeUsedInPhi(PhiInsn phiInsn) {
+		if (usedInPhi != null) {
+			usedInPhi.removeIf(insn -> insn == phiInsn);
+			if (usedInPhi.isEmpty()) {
+				usedInPhi = null;
+			}
+		}
+	}
+
+	public void updateUsedInPhiList() {
+		this.usedInPhi = null;
+		for (RegisterArg reg : useList) {
+			InsnNode parentInsn = reg.getParentInsn();
+			if (parentInsn != null && parentInsn.getType() == InsnType.PHI) {
+				addUsedInPhi((PhiInsn) parentInsn);
+			}
+		}
 	}
 
 	@Nullable
-	public PhiInsn getUsedInPhi() {
+	public PhiInsn getOnlyOneUseInPhi() {
+		if (usedInPhi != null && usedInPhi.size() == 1) {
+			return usedInPhi.get(0);
+		}
+		return null;
+	}
+
+	public List<PhiInsn> getUsedInPhi() {
+		if (usedInPhi == null) {
+			return Collections.emptyList();
+		}
 		return usedInPhi;
 	}
 
 	public boolean isUsedInPhi() {
-		return usedInPhi != null;
+		return usedInPhi != null && !usedInPhi.isEmpty();
 	}
 
 	public int getVariableUseCount() {
+		int count = useList.size();
 		if (usedInPhi == null) {
-			return useList.size();
+			return count;
 		}
-		return useList.size() + usedInPhi.getResult().getSVar().getUseCount();
+		for (PhiInsn phiInsn : usedInPhi) {
+			count += phiInsn.getResult().getSVar().getUseCount();
+		}
+		return count;
 	}
 
 	public void setName(String name) {
@@ -136,6 +194,11 @@ public class SSAVar extends AttrNode {
 	public void setCodeVar(@NotNull CodeVar codeVar) {
 		this.codeVar = codeVar;
 		codeVar.addSsaVar(this);
+	}
+
+	public void resetTypeAndCodeVar() {
+		this.typeInfo.reset();
+		this.codeVar = null;
 	}
 
 	public boolean isCodeVarSet() {

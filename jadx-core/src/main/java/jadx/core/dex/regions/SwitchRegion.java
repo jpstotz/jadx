@@ -4,24 +4,43 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import jadx.core.codegen.CodeWriter;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.IBranchRegion;
 import jadx.core.dex.nodes.IContainer;
 import jadx.core.dex.nodes.IRegion;
+import jadx.core.utils.Utils;
 
 public final class SwitchRegion extends AbstractRegion implements IBranchRegion {
 
+	public static final Object DEFAULT_CASE_KEY = new Object();
+
 	private final BlockNode header;
 
-	private final List<List<Object>> keys;
-	private final List<IContainer> cases;
-	private IContainer defCase;
+	private final List<CaseInfo> cases;
 
 	public SwitchRegion(IRegion parent, BlockNode header) {
 		super(parent);
 		this.header = header;
-		this.keys = new ArrayList<>();
 		this.cases = new ArrayList<>();
+	}
+
+	public static final class CaseInfo {
+		private final List<Object> keys;
+		private final IContainer container;
+
+		public CaseInfo(List<Object> keys, IContainer container) {
+			this.keys = keys;
+			this.container = container;
+		}
+
+		public List<Object> getKeys() {
+			return keys;
+		}
+
+		public IContainer getContainer() {
+			return container;
+		}
 	}
 
 	public BlockNode getHeader() {
@@ -29,45 +48,28 @@ public final class SwitchRegion extends AbstractRegion implements IBranchRegion 
 	}
 
 	public void addCase(List<Object> keysList, IContainer c) {
-		keys.add(keysList);
-		cases.add(c);
+		cases.add(new CaseInfo(keysList, c));
 	}
 
-	public void setDefaultCase(IContainer block) {
-		defCase = block;
-	}
-
-	public IContainer getDefaultCase() {
-		return defCase;
-	}
-
-	public List<List<Object>> getKeys() {
-		return keys;
-	}
-
-	public List<IContainer> getCases() {
+	public List<CaseInfo> getCases() {
 		return cases;
+	}
+
+	public List<IContainer> getCaseContainers() {
+		return Utils.collectionMap(cases, caseInfo -> caseInfo.container);
 	}
 
 	@Override
 	public List<IContainer> getSubBlocks() {
-		List<IContainer> all = new ArrayList<>(cases.size() + 2);
+		List<IContainer> all = new ArrayList<>(cases.size() + 1);
 		all.add(header);
-		all.addAll(cases);
-		if (defCase != null) {
-			all.add(defCase);
-		}
+		all.addAll(getCaseContainers());
 		return Collections.unmodifiableList(all);
 	}
 
 	@Override
 	public List<IContainer> getBranches() {
-		List<IContainer> branches = new ArrayList<>(cases.size() + 1);
-		branches.addAll(cases);
-		if (defCase != null) {
-			branches.add(defCase);
-		}
-		return Collections.unmodifiableList(branches);
+		return Collections.unmodifiableList(getCaseContainers());
 	}
 
 	@Override
@@ -77,6 +79,15 @@ public final class SwitchRegion extends AbstractRegion implements IBranchRegion 
 
 	@Override
 	public String toString() {
-		return "Switch: " + cases.size() + ", default: " + defCase;
+		StringBuilder sb = new StringBuilder();
+		sb.append("Switch: ").append(cases.size());
+		for (CaseInfo caseInfo : cases) {
+			List<String> keyStrings = Utils.collectionMap(caseInfo.getKeys(),
+					k -> k == DEFAULT_CASE_KEY ? "default" : k.toString());
+			sb.append(CodeWriter.NL).append(" case ")
+					.append(Utils.listToString(keyStrings))
+					.append(" -> ").append(caseInfo.getContainer());
+		}
+		return sb.toString();
 	}
 }

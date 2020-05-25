@@ -32,7 +32,7 @@ import jadx.gui.jobs.BackgroundJob;
 import jadx.gui.jobs.BackgroundWorker;
 import jadx.gui.jobs.DecompileJob;
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.codearea.CodeArea;
+import jadx.gui.ui.codearea.AbstractCodeArea;
 import jadx.gui.utils.CacheObject;
 import jadx.gui.utils.JumpPosition;
 import jadx.gui.utils.NLS;
@@ -403,7 +403,7 @@ public abstract class CommonSearchDialog extends JDialog {
 		private final Map<Integer, Component> componentCache = new HashMap<>();
 
 		public ResultsTableCellRenderer() {
-			RSyntaxTextArea area = CodeArea.getDefaultArea(mainWindow);
+			RSyntaxTextArea area = AbstractCodeArea.getDefaultArea(mainWindow);
 			this.font = area.getFont();
 			this.codeSelectedColor = area.getSelectionColor();
 			this.codeBackground = area.getBackground();
@@ -446,7 +446,7 @@ public abstract class CommonSearchDialog extends JDialog {
 
 		private Component makeCell(JNode node, int column) {
 			if (column == 0) {
-				JLabel label = new JLabel(node.makeLongString() + "  ", node.getIcon(), SwingConstants.LEFT);
+				JLabel label = new JLabel(node.makeLongStringHtml() + "  ", node.getIcon(), SwingConstants.LEFT);
 				label.setFont(font);
 				label.setOpaque(true);
 				label.setToolTipText(label.getText());
@@ -455,7 +455,7 @@ public abstract class CommonSearchDialog extends JDialog {
 			if (!node.hasDescString()) {
 				return emptyLabel;
 			}
-			RSyntaxTextArea textArea = CodeArea.getDefaultArea(mainWindow);
+			RSyntaxTextArea textArea = AbstractCodeArea.getDefaultArea(mainWindow);
 			textArea.setLayout(new GridLayout(1, 1));
 			textArea.setEditable(false);
 			textArea.setSyntaxEditingStyle(SyntaxConstants.SYNTAX_STYLE_JAVA);

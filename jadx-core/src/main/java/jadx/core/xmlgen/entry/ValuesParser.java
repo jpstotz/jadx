@@ -40,11 +40,12 @@ public class ValuesParser extends ParserConstants {
 	}
 
 	private static void decodeAndroid(RootNode root) throws IOException {
-		InputStream inputStream = new BufferedInputStream(ValuesParser.class.getResourceAsStream("/resources.arsc"));
-		ResTableParser androidParser = new ResTableParser(root);
-		androidParser.decode(inputStream);
-		androidStrings = androidParser.getStrings();
-		androidResMap = androidParser.getResStorage().getResourcesNames();
+		try (InputStream inputStream = new BufferedInputStream(ValuesParser.class.getResourceAsStream("/resources.arsc"))) {
+			ResTableParser androidParser = new ResTableParser(root);
+			androidParser.decode(inputStream);
+			androidStrings = androidParser.getStrings();
+			androidResMap = androidParser.getResStorage().getResourcesNames();
+		}
 	}
 
 	@Nullable
@@ -99,6 +100,7 @@ public class ValuesParser extends ParserConstants {
 			case TYPE_INT_COLOR_RGB4:
 				return String.format("#%03x", data & 0xFFF);
 
+			case TYPE_DYNAMIC_REFERENCE:
 			case TYPE_REFERENCE: {
 				String ri = resMap.get(data);
 				if (ri == null) {
@@ -130,6 +132,9 @@ public class ValuesParser extends ParserConstants {
 				return decodeComplex(data, false);
 			case TYPE_FRACTION:
 				return decodeComplex(data, true);
+			case TYPE_DYNAMIC_ATTRIBUTE:
+				LOG.warn("Data type TYPE_DYNAMIC_ATTRIBUTE not yet supported: {}", data);
+				return "  TYPE_DYNAMIC_ATTRIBUTE: " + data;
 
 			default:
 				LOG.warn("Unknown data type: 0x{} {}", Integer.toHexString(dataType), data);

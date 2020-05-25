@@ -3,7 +3,6 @@ package jadx.core.dex.visitors.regions;
 import java.util.List;
 
 import jadx.core.dex.attributes.AFlag;
-import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.nodes.IContainer;
 import jadx.core.dex.nodes.IRegion;
 import jadx.core.dex.nodes.MethodNode;
@@ -18,26 +17,19 @@ import static jadx.core.utils.RegionUtils.insnsCount;
 
 public class IfRegionVisitor extends AbstractVisitor {
 
-	private static final TernaryVisitor TERNARY_VISITOR = new TernaryVisitor();
+	private static final TernaryMod TERNARY_VISITOR = new TernaryMod();
 	private static final ProcessIfRegionVisitor PROCESS_IF_REGION_VISITOR = new ProcessIfRegionVisitor();
 	private static final RemoveRedundantElseVisitor REMOVE_REDUNDANT_ELSE_VISITOR = new RemoveRedundantElseVisitor();
 
 	@Override
 	public void visit(MethodNode mth) {
+		if (mth.isNoCode()) {
+			return;
+		}
+
 		DepthRegionTraversal.traverseIterative(mth, TERNARY_VISITOR);
 		DepthRegionTraversal.traverse(mth, PROCESS_IF_REGION_VISITOR);
 		DepthRegionTraversal.traverseIterative(mth, REMOVE_REDUNDANT_ELSE_VISITOR);
-	}
-
-	/**
-	 * Collapse ternary operators
-	 */
-	private static class TernaryVisitor implements IRegionIterativeVisitor {
-		@Override
-		public boolean visitRegion(MethodNode mth, IRegion region) {
-			return region instanceof IfRegion
-					&& TernaryMod.makeTernaryInsn(mth, (IfRegion) region);
-		}
 	}
 
 	private static class ProcessIfRegionVisitor extends AbstractRegionVisitor {
@@ -103,7 +95,7 @@ public class IfRegionVisitor extends AbstractVisitor {
 	}
 
 	private static void moveReturnToThenBlock(MethodNode mth, IfRegion ifRegion) {
-		if (!mth.getReturnType().equals(ArgType.VOID)
+		if (!mth.isVoidReturn()
 				&& hasSimpleReturnBlock(ifRegion.getElseRegion())
 		/* && insnsCount(ifRegion.getThenRegion()) < 2 */) {
 			invertIfRegion(ifRegion);
@@ -146,7 +138,7 @@ public class IfRegionVisitor extends AbstractVisitor {
 		// code style check:
 		// will remove 'return;' from 'then' and 'else' with one instruction
 		// see #jadx.tests.integration.conditions.TestConditions9
-		if (mth.getReturnType() == ArgType.VOID
+		if (mth.isVoidReturn()
 				&& insnsCount(ifRegion.getThenRegion()) == 2
 				&& insnsCount(ifRegion.getElseRegion()) == 2) {
 			return false;

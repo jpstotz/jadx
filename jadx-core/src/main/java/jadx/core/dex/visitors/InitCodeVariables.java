@@ -2,6 +2,7 @@ package jadx.core.dex.visitors;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -31,8 +32,19 @@ public class InitCodeVariables extends AbstractVisitor {
 		initCodeVars(mth);
 	}
 
+	public static void rerun(MethodNode mth) {
+		for (SSAVar sVar : mth.getSVars()) {
+			sVar.resetTypeAndCodeVar();
+		}
+		initCodeVars(mth);
+	}
+
 	private static void initCodeVars(MethodNode mth) {
-		for (RegisterArg mthArg : mth.getArguments(true)) {
+		RegisterArg thisArg = mth.getThisArg();
+		if (thisArg != null) {
+			initCodeVar(thisArg.getSVar());
+		}
+		for (RegisterArg mthArg : mth.getArgRegs()) {
 			initCodeVar(mthArg.getSVar());
 		}
 		for (SSAVar ssaVar : mth.getSVars()) {
@@ -58,11 +70,11 @@ public class InitCodeVariables extends AbstractVisitor {
 	}
 
 	private static void setCodeVar(SSAVar ssaVar, CodeVar codeVar) {
-		PhiInsn usedInPhi = ssaVar.getUsedInPhi();
-		if (usedInPhi != null) {
+		List<PhiInsn> usedInPhiList = ssaVar.getUsedInPhi();
+		if (!usedInPhiList.isEmpty()) {
 			Set<SSAVar> vars = new LinkedHashSet<>();
 			vars.add(ssaVar);
-			collectConnectedVars(usedInPhi, vars);
+			collectConnectedVars(usedInPhiList, vars);
 			setCodeVarType(codeVar, vars);
 			vars.forEach(var -> {
 				if (var.isCodeVarSet()) {
@@ -78,8 +90,8 @@ public class InitCodeVariables extends AbstractVisitor {
 	private static void setCodeVarType(CodeVar codeVar, Set<SSAVar> vars) {
 		if (vars.size() > 1) {
 			List<ArgType> imTypes = vars.stream()
-					.filter(var -> var.contains(AFlag.IMMUTABLE_TYPE))
-					.map(var -> var.getTypeInfo().getType())
+					.map(SSAVar::getImmutableType)
+					.filter(Objects::nonNull)
 					.filter(ArgType::isTypeKnown)
 					.distinct()
 					.collect(Collectors.toList());
@@ -92,19 +104,18 @@ public class InitCodeVariables extends AbstractVisitor {
 		}
 	}
 
-	private static void collectConnectedVars(PhiInsn phiInsn, Set<SSAVar> vars) {
-		if (phiInsn == null) {
-			return;
-		}
-		SSAVar resultVar = phiInsn.getResult().getSVar();
-		if (vars.add(resultVar)) {
-			collectConnectedVars(resultVar.getUsedInPhi(), vars);
-		}
-		phiInsn.getArguments().forEach(arg -> {
-			SSAVar sVar = ((RegisterArg) arg).getSVar();
-			if (vars.add(sVar)) {
-				collectConnectedVars(sVar.getUsedInPhi(), vars);
+	private static void collectConnectedVars(List<PhiInsn> phiInsnList, Set<SSAVar> vars) {
+		for (PhiInsn phiInsn : phiInsnList) {
+			SSAVar resultVar = phiInsn.getResult().getSVar();
+			if (vars.add(resultVar)) {
+				collectConnectedVars(resultVar.getUsedInPhi(), vars);
 			}
-		});
+			phiInsn.getArguments().forEach(arg -> {
+				SSAVar sVar = ((RegisterArg) arg).getSVar();
+				if (vars.add(sVar)) {
+					collectConnectedVars(sVar.getUsedInPhi(), vars);
+				}
+			});
+		}
 	}
 }

@@ -1,21 +1,15 @@
 package jadx.cli;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.stream.Stream;
 
 import com.beust.jcommander.IStringConverter;
 import com.beust.jcommander.Parameter;
-
-import ch.qos.logback.classic.spi.ILoggingEvent;
-import ch.qos.logback.core.Appender;
 
 import jadx.api.JadxArgs;
 import jadx.api.JadxArgs.RenameEnum;
@@ -45,6 +39,9 @@ public class JadxCLIArgs {
 
 	@Parameter(names = { "--single-class" }, description = "decompile a single class")
 	protected String singleClass = null;
+
+	@Parameter(names = { "--output-format" }, description = "can be 'java' or 'json'")
+	protected String outputFormat = "java";
 
 	@Parameter(names = { "-e", "--export-gradle" }, description = "save as android gradle project")
 	protected boolean exportAsGradleProject = false;
@@ -86,7 +83,21 @@ public class JadxCLIArgs {
 	protected boolean deobfuscationForceSave = false;
 
 	@Parameter(names = { "--deobf-use-sourcename" }, description = "use source file name as class name alias")
-	protected boolean deobfuscationUseSourceNameAsAlias = true;
+	protected boolean deobfuscationUseSourceNameAsAlias = false;
+
+	@Parameter(names = { "--deobf-parse-kotlin-metadata" }, description = "parse kotlin metadata to class and package names")
+	protected boolean deobfuscationParseKotlinMetadata = false;
+
+	@Parameter(
+			names = { "--rename-flags" },
+			description = "what to rename, comma-separated,"
+					+ " 'case' for system case sensitivity,"
+					+ " 'valid' for java identifiers,"
+					+ " 'printable' characters,"
+					+ " 'none' or 'all' (default)",
+			converter = RenameConverter.class
+	)
+	protected Set<RenameEnum> renameFlags = EnumSet.allOf(RenameEnum.class);
 
 	@Parameter(names = { "--fs-case-sensitive" }, description = "treat filesystem as case sensitive, false by default")
 	protected boolean fsCaseSensitive = false;
@@ -100,19 +111,18 @@ public class JadxCLIArgs {
 	@Parameter(names = { "-f", "--fallback" }, description = "make simple dump (using goto instead of 'if', 'for', etc)")
 	protected boolean fallbackMode = false;
 
-	@Parameter(
-			names = { "--rename-flags" },
-			description = "what to rename, comma-separated,"
-					+ " 'case' for system case sensitivity,"
-					+ " 'valid' for java identifiers,"
-					+ " 'printable' characters,"
-					+ " 'none' or 'all' (default)",
-			converter = RenameConverter.class
-	)
-	protected Set<RenameEnum> renameFlags = EnumSet.allOf(RenameEnum.class);
-
-	@Parameter(names = { "-v", "--verbose" }, description = "verbose output")
+	@Parameter(names = { "-v", "--verbose" }, description = "verbose output (set --log-level to DEBUG)")
 	protected boolean verbose = false;
+
+	@Parameter(names = { "-q", "--quiet" }, description = "turn off output (set --log-level to QUIET)")
+	protected boolean quiet = false;
+
+	@Parameter(
+			names = { "--log-level" },
+			description = "set log level, values: QUIET, PROGRESS, ERROR, WARN, INFO, DEBUG",
+			converter = LogHelper.LogLevelConverter.class
+	)
+	protected LogHelper.LogLevelEnum logLevel = LogHelper.LogLevelEnum.PROGRESS;
 
 	@Parameter(names = { "--version" }, description = "print jadx version")
 	protected boolean printVersion = false;
@@ -155,15 +165,7 @@ public class JadxCLIArgs {
 			if (threadsCount <= 0) {
 				throw new JadxException("Threads count must be positive, got: " + threadsCount);
 			}
-			if (verbose) {
-				ch.qos.logback.classic.Logger rootLogger =
-						(ch.qos.logback.classic.Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
-				// remove INFO ThresholdFilter
-				Appender<ILoggingEvent> appender = rootLogger.getAppender("STDOUT");
-				if (appender != null) {
-					appender.clearAllFilters();
-				}
-			}
+			LogHelper.setLogLevelFromArgs(this);
 		} catch (JadxException e) {
 			System.err.println("ERROR: " + e.getMessage());
 			jcw.printUsage();
@@ -178,6 +180,7 @@ public class JadxCLIArgs {
 		args.setOutDir(FileUtils.toFile(outDir));
 		args.setOutDirSrc(FileUtils.toFile(outDirSrc));
 		args.setOutDirRes(FileUtils.toFile(outDirRes));
+		args.setOutputFormat(JadxArgs.OutputFormatEnum.valueOf(outputFormat.toUpperCase()));
 		args.setThreadsCount(threadsCount);
 		args.setSkipSources(skipSources);
 		if (singleClass != null) {
@@ -194,6 +197,7 @@ public class JadxCLIArgs {
 		args.setDeobfuscationMinLength(deobfuscationMinLength);
 		args.setDeobfuscationMaxLength(deobfuscationMaxLength);
 		args.setUseSourceNameAsClassAlias(deobfuscationUseSourceNameAsAlias);
+		args.setParseKotlinMetadata(deobfuscationParseKotlinMetadata);
 		args.setEscapeUnicode(escapeUnicode);
 		args.setRespectBytecodeAccModifiers(respectBytecodeAccessModifiers);
 		args.setExportAsGradleProject(exportAsGradleProject);
@@ -275,6 +279,10 @@ public class JadxCLIArgs {
 		return deobfuscationUseSourceNameAsAlias;
 	}
 
+	public boolean isDeobfuscationParseKotlinMetadata() {
+		return deobfuscationParseKotlinMetadata;
+	}
+
 	public boolean isEscapeUnicode() {
 		return escapeUnicode;
 	}
@@ -335,15 +343,18 @@ public class JadxCLIArgs {
 				try {
 					set.add(RenameEnum.valueOf(s.toUpperCase(Locale.ROOT)));
 				} catch (IllegalArgumentException e) {
-					String values = Arrays.stream(RenameEnum.values())
-							.map(v -> '\'' + v.name().toLowerCase(Locale.ROOT) + '\'')
-							.collect(Collectors.joining(", "));
 					throw new IllegalArgumentException(
 							'\'' + s + "' is unknown for parameter " + paramName
-									+ ", possible values are " + values);
+									+ ", possible values are " + enumValuesString(RenameEnum.values()));
 				}
 			}
 			return set;
 		}
+	}
+
+	public static String enumValuesString(Enum<?>[] values) {
+		return Stream.of(values)
+				.map(v -> '\'' + v.name().toLowerCase(Locale.ROOT) + '\'')
+				.collect(Collectors.joining(", "));
 	}
 }

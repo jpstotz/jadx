@@ -39,11 +39,19 @@ public final class JavaField implements JavaNode {
 	}
 
 	public ArgType getType() {
-		return field.getType();
+		return ArgType.tryToResolveClassAlias(field.dex(), field.getType());
 	}
 
+	@Override
 	public int getDecompiledLine() {
 		return field.getDecompiledLine();
+	}
+
+	/**
+	 * Internal API. Not Stable!
+	 */
+	public FieldNode getFieldNode() {
+		return field;
 	}
 
 	@Override

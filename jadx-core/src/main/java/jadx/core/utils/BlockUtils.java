@@ -4,9 +4,11 @@ import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
@@ -14,12 +16,14 @@ import org.jetbrains.annotations.Nullable;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.IgnoreEdgeAttr;
+import jadx.core.dex.attributes.nodes.LoopInfo;
 import jadx.core.dex.attributes.nodes.PhiListAttr;
 import jadx.core.dex.instructions.IfNode;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.PhiInsn;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.InsnWrapArg;
+import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.mods.TernaryInsn;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.IBlock;
@@ -136,6 +140,27 @@ public class BlockUtils {
 		return from.getSuccessors().contains(to);
 	}
 
+	public static boolean isFollowBackEdge(BlockNode block) {
+		if (block == null) {
+			return false;
+		}
+		if (block.contains(AFlag.LOOP_START)) {
+			List<BlockNode> predecessors = block.getPredecessors();
+			if (predecessors.size() == 1) {
+				BlockNode loopEndBlock = predecessors.get(0);
+				if (loopEndBlock.contains(AFlag.LOOP_END)) {
+					List<LoopInfo> loops = loopEndBlock.getAll(AType.LOOP);
+					for (LoopInfo loop : loops) {
+						if (loop.getStart().equals(block) && loop.getEnd().equals(loopEndBlock)) {
+							return true;
+						}
+					}
+				}
+			}
+		}
+		return false;
+	}
+
 	/**
 	 * Check if instruction contains in block (use == for comparison, not equals)
 	 */
@@ -165,6 +190,7 @@ public class BlockUtils {
 		return insns.get(insns.size() - 1);
 	}
 
+	@Nullable
 	public static BlockNode getBlockByInsn(MethodNode mth, InsnNode insn) {
 		if (insn instanceof PhiInsn) {
 			return searchBlockWithPhi(mth, (PhiInsn) insn);
@@ -261,7 +287,19 @@ public class BlockUtils {
 		return null;
 	}
 
-	public static BitSet blocksToBitSet(MethodNode mth, List<BlockNode> blocks) {
+	public static BitSet newBlocksBitSet(MethodNode mth) {
+		return new BitSet(mth.getBasicBlocks().size());
+	}
+
+	public static BitSet copyBlocksBitSet(MethodNode mth, BitSet bitSet) {
+		BitSet copy = new BitSet(mth.getBasicBlocks().size());
+		if (!bitSet.isEmpty()) {
+			copy.or(bitSet);
+		}
+		return copy;
+	}
+
+	public static BitSet blocksToBitSet(MethodNode mth, Collection<BlockNode> blocks) {
 		BitSet bs = new BitSet(mth.getBasicBlocks().size());
 		for (BlockNode block : blocks) {
 			bs.set(block.getId());
@@ -269,7 +307,18 @@ public class BlockUtils {
 		return bs;
 	}
 
+	@Nullable
+	public static BlockNode bitSetToOneBlock(MethodNode mth, BitSet bs) {
+		if (bs == null || bs.cardinality() != 1) {
+			return null;
+		}
+		return mth.getBasicBlocks().get(bs.nextSetBit(0));
+	}
+
 	public static List<BlockNode> bitSetToBlocks(MethodNode mth, BitSet bs) {
+		if (bs == null || bs == EmptyBitSet.EMPTY) {
+			return Collections.emptyList();
+		}
 		int size = bs.cardinality();
 		if (size == 0) {
 			return Collections.emptyList();
@@ -429,6 +478,9 @@ public class BlockUtils {
 		if (b1 == null || b2 == null) {
 			return null;
 		}
+		if (b1.getDomFrontier() == null || b2.getDomFrontier() == null) {
+			return null;
+		}
 		BitSet b = new BitSet();
 		b.or(b1.getDomFrontier());
 		b.and(b2.getDomFrontier());
@@ -454,20 +506,30 @@ public class BlockUtils {
 	 */
 	public static List<BlockNode> collectBlocksDominatedBy(BlockNode dominator, BlockNode start) {
 		List<BlockNode> result = new ArrayList<>();
-		Set<BlockNode> visited = new HashSet<>();
-		collectWhileDominates(dominator, start, result, visited);
+		collectWhileDominates(dominator, start, result, new HashSet<>(), false);
 		return result;
 	}
 
-	private static void collectWhileDominates(BlockNode dominator, BlockNode child, List<BlockNode> result, Set<BlockNode> visited) {
+	/**
+	 * Collect all block dominated by 'dominator', starting from 'start', include exception handlers
+	 */
+	public static List<BlockNode> collectBlocksDominatedByWithExcHandlers(BlockNode dominator, BlockNode start) {
+		List<BlockNode> result = new ArrayList<>();
+		collectWhileDominates(dominator, start, result, new HashSet<>(), true);
+		return result;
+	}
+
+	private static void collectWhileDominates(BlockNode dominator, BlockNode child, List<BlockNode> result,
+			Set<BlockNode> visited, boolean includeExcHandlers) {
 		if (visited.contains(child)) {
 			return;
 		}
 		visited.add(child);
-		for (BlockNode node : child.getCleanSuccessors()) {
+		List<BlockNode> successors = includeExcHandlers ? child.getSuccessors() : child.getCleanSuccessors();
+		for (BlockNode node : successors) {
 			if (node.isDominator(dominator)) {
 				result.add(node);
-				collectWhileDominates(dominator, node, result, visited);
+				collectWhileDominates(dominator, node, result, visited, includeExcHandlers);
 			}
 		}
 	}
@@ -557,25 +619,57 @@ public class BlockUtils {
 		return insns;
 	}
 
+	public static boolean isFirstInsn(MethodNode mth, InsnNode insn) {
+		BlockNode enterBlock = mth.getEnterBlock();
+		if (enterBlock == null || enterBlock.getInstructions().isEmpty()) {
+			return false;
+		}
+		return enterBlock.getInstructions().get(0) == insn;
+	}
+
 	/**
 	 * Replace insn by index i in block,
 	 * for proper copy attributes, assume attributes are not overlap
 	 */
-	public static void replaceInsn(BlockNode block, int i, InsnNode insn) {
+	public static void replaceInsn(MethodNode mth, BlockNode block, int i, InsnNode insn) {
 		InsnNode prevInsn = block.getInstructions().get(i);
 		insn.copyAttributesFrom(prevInsn);
 		insn.setSourceLine(prevInsn.getSourceLine());
 		insn.setOffset(prevInsn.getOffset());
 		block.getInstructions().set(i, insn);
+
+		RegisterArg result = insn.getResult();
+		RegisterArg prevResult = prevInsn.getResult();
+		if (result != null && prevResult != null && result.sameRegAndSVar(prevResult)) {
+			// Don't unbind result for same register.
+			// Unbind will remove arg from PHI and not add it back on rebind.
+			InsnRemover.unbindAllArgs(mth, prevInsn);
+		} else {
+			InsnRemover.unbindInsn(mth, prevInsn);
+		}
+		insn.rebindArgs();
 	}
 
-	public static boolean replaceInsn(BlockNode block, InsnNode oldInsn, InsnNode newInsn) {
+	public static boolean replaceInsn(MethodNode mth, BlockNode block, InsnNode oldInsn, InsnNode newInsn) {
 		List<InsnNode> instructions = block.getInstructions();
 		int size = instructions.size();
 		for (int i = 0; i < size; i++) {
 			InsnNode instruction = instructions.get(i);
 			if (instruction == oldInsn) {
-				replaceInsn(block, i, newInsn);
+				replaceInsn(mth, block, i, newInsn);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public static boolean insertAfterInsn(BlockNode block, InsnNode insn, InsnNode newInsn) {
+		List<InsnNode> instructions = block.getInstructions();
+		int size = instructions.size();
+		for (int i = 0; i < size; i++) {
+			InsnNode instruction = instructions.get(i);
+			if (instruction == insn) {
+				instructions.add(i + 1, newInsn);
 				return true;
 			}
 		}
@@ -584,10 +678,108 @@ public class BlockUtils {
 
 	public static boolean replaceInsn(MethodNode mth, InsnNode oldInsn, InsnNode newInsn) {
 		for (BlockNode block : mth.getBasicBlocks()) {
-			if (replaceInsn(block, oldInsn, newInsn)) {
+			if (replaceInsn(mth, block, oldInsn, newInsn)) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	public static Map<BlockNode, BitSet> calcPostDominance(MethodNode mth) {
+		return calcPartialPostDominance(mth, mth.getBasicBlocks(), mth.getExitBlocks().get(0));
+	}
+
+	public static Map<BlockNode, BitSet> calcPartialPostDominance(MethodNode mth, Collection<BlockNode> blockNodes, BlockNode exitBlock) {
+		int blocksCount = mth.getBasicBlocks().size();
+		Map<BlockNode, BitSet> map = new HashMap<>(blocksCount);
+
+		BitSet initSet = new BitSet(blocksCount);
+		for (BlockNode block : blockNodes) {
+			initSet.set(block.getId());
+		}
+
+		for (BlockNode block : blockNodes) {
+			BitSet postDoms = new BitSet(blocksCount);
+			postDoms.or(initSet);
+			map.put(block, postDoms);
+		}
+		BitSet exitBitSet = map.get(exitBlock);
+		exitBitSet.clear();
+		exitBitSet.set(exitBlock.getId());
+
+		BitSet domSet = new BitSet(blocksCount);
+		boolean changed;
+		do {
+			changed = false;
+			for (BlockNode block : blockNodes) {
+				if (block == exitBlock) {
+					continue;
+				}
+				BitSet d = map.get(block);
+				if (!changed) {
+					domSet.clear();
+					domSet.or(d);
+				}
+				for (BlockNode scc : block.getSuccessors()) {
+					BitSet scPDoms = map.get(scc);
+					if (scPDoms != null) {
+						d.and(scPDoms);
+					}
+				}
+				d.set(block.getId());
+				if (!changed && !d.equals(domSet)) {
+					changed = true;
+					map.put(block, d);
+				}
+			}
+		} while (changed);
+
+		blockNodes.forEach(block -> {
+			BitSet postDoms = map.get(block);
+			postDoms.clear(block.getId());
+			if (postDoms.isEmpty()) {
+				map.put(block, EmptyBitSet.EMPTY);
+			}
+		});
+		return map;
+	}
+
+	@Nullable
+	public static BlockNode calcImmediatePostDominator(MethodNode mth, BlockNode block) {
+		BlockNode oneSuccessor = Utils.getOne(block.getSuccessors());
+		if (oneSuccessor != null) {
+			return oneSuccessor;
+		}
+		return calcImmediatePostDominator(mth, block, calcPostDominance(mth));
+	}
+
+	@Nullable
+	public static BlockNode calcPartialImmediatePostDominator(MethodNode mth, BlockNode block,
+			Collection<BlockNode> blockNodes, BlockNode exitBlock) {
+		BlockNode oneSuccessor = Utils.getOne(block.getSuccessors());
+		if (oneSuccessor != null) {
+			return oneSuccessor;
+		}
+		Map<BlockNode, BitSet> pDomsMap = calcPartialPostDominance(mth, blockNodes, exitBlock);
+		return calcImmediatePostDominator(mth, block, pDomsMap);
+	}
+
+	@Nullable
+	public static BlockNode calcImmediatePostDominator(MethodNode mth, BlockNode block, Map<BlockNode, BitSet> postDomsMap) {
+		BlockNode oneSuccessor = Utils.getOne(block.getSuccessors());
+		if (oneSuccessor != null) {
+			return oneSuccessor;
+		}
+		List<BlockNode> basicBlocks = mth.getBasicBlocks();
+		BitSet postDoms = postDomsMap.get(block);
+		BitSet bs = copyBlocksBitSet(mth, postDoms);
+		for (int i = bs.nextSetBit(0); i >= 0; i = bs.nextSetBit(i + 1)) {
+			BlockNode pdomBlock = basicBlocks.get(i);
+			BitSet pdoms = postDomsMap.get(pdomBlock);
+			if (pdoms != null) {
+				bs.andNot(pdoms);
+			}
+		}
+		return bitSetToOneBlock(mth, bs);
 	}
 }

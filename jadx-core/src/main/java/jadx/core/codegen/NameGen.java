@@ -132,11 +132,18 @@ public class NameGen {
 		if (!NameMapper.isValidAndPrintable(varName)) {
 			varName = getFallbackName(var);
 		}
+		if (Consts.DEBUG) {
+			varName += '_' + getFallbackName(var);
+		}
 		return varName;
 	}
 
 	private String getFallbackName(CodeVar var) {
-		return getFallbackName(var.getSsaVars().get(0).getAssign());
+		List<SSAVar> ssaVars = var.getSsaVars();
+		if (ssaVars.isEmpty()) {
+			return "v";
+		}
+		return getFallbackName(ssaVars.get(0).getAssign());
 	}
 
 	private String getFallbackName(RegisterArg arg) {

@@ -1,36 +1,18 @@
 package jadx.gui.ui.codearea;
 
-import java.awt.*;
 import java.awt.event.ActionEvent;
 
-import javax.swing.*;
-import javax.swing.event.PopupMenuEvent;
-import javax.swing.event.PopupMenuListener;
+import org.jetbrains.annotations.Nullable;
 
-import org.fife.ui.rsyntaxtextarea.Token;
-
-import jadx.api.JavaNode;
-import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
-import jadx.gui.ui.ContentPanel;
-import jadx.gui.ui.MainWindow;
 import jadx.gui.ui.UsageDialog;
 import jadx.gui.utils.NLS;
 
-public final class FindUsageAction extends AbstractAction implements PopupMenuListener {
+public final class FindUsageAction extends JNodeMenuAction<JNode> {
 	private static final long serialVersionUID = 4692546569977976384L;
 
-	private final transient ContentPanel contentPanel;
-	private final transient CodeArea codeArea;
-	private final transient JClass jCls;
-
-	private transient JavaNode node;
-
-	public FindUsageAction(ContentPanel contentPanel, CodeArea codeArea, JClass jCls) {
-		super(NLS.str("popup.find_usage"));
-		this.contentPanel = contentPanel;
-		this.codeArea = codeArea;
-		this.jCls = jCls;
+	public FindUsageAction(CodeArea codeArea) {
+		super(NLS.str("popup.find_usage"), codeArea);
 	}
 
 	@Override
@@ -38,32 +20,13 @@ public final class FindUsageAction extends AbstractAction implements PopupMenuLi
 		if (node == null) {
 			return;
 		}
-		MainWindow mainWindow = contentPanel.getTabbedPane().getMainWindow();
-		JNode jNode = mainWindow.getCacheObject().getNodeCache().makeFrom(node);
-		UsageDialog usageDialog = new UsageDialog(mainWindow, jNode);
+		UsageDialog usageDialog = new UsageDialog(codeArea.getMainWindow(), node);
 		usageDialog.setVisible(true);
 	}
 
+	@Nullable
 	@Override
-	public void popupMenuWillBecomeVisible(PopupMenuEvent e) {
-		node = null;
-		Point pos = codeArea.getMousePosition();
-		if (pos != null) {
-			Token token = codeArea.viewToToken(pos);
-			if (token != null) {
-				node = codeArea.getJavaNodeAtOffset(jCls, token.getOffset());
-			}
-		}
-		setEnabled(node != null);
-	}
-
-	@Override
-	public void popupMenuWillBecomeInvisible(PopupMenuEvent e) {
-		// do nothing
-	}
-
-	@Override
-	public void popupMenuCanceled(PopupMenuEvent e) {
-		// do nothing
+	public JNode getNodeByOffset(int offset) {
+		return codeArea.getJNodeAtOffset(offset);
 	}
 }

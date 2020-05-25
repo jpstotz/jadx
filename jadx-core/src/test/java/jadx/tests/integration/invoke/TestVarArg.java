@@ -12,16 +12,16 @@ public class TestVarArg extends IntegrationTest {
 
 	public static class TestCls {
 
-		void test1(int... a) {
+		public void test1(int... a) {
 		}
 
-		void test2(int i, Object... a) {
+		public void test2(int i, Object... a) {
 		}
 
-		void test3(int[] a) {
+		public void test3(int[] a) {
 		}
 
-		void call() {
+		public void call() {
 			test1(1, 2);
 			test2(3, "1", 7);
 			test3(new int[] { 5, 8 });
@@ -37,7 +37,7 @@ public class TestVarArg extends IntegrationTest {
 		assertThat(code, containsString("void test2(int i, Object... a) {"));
 
 		assertThat(code, containsString("test1(1, 2);"));
-		assertThat(code, containsString("test2(3, \"1\", Integer.valueOf(7));"));
+		assertThat(code, containsString("test2(3, \"1\", 7);"));
 
 		// negative case
 		assertThat(code, containsString("void test3(int[] a) {"));

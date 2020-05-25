@@ -1,30 +1,36 @@
 package jadx.core.dex.instructions;
 
-import java.util.LinkedHashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.RegisterArg;
+import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.InsnNode;
-import jadx.core.utils.InsnRemover;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
 public final class PhiInsn extends InsnNode {
 
-	private final Map<RegisterArg, BlockNode> blockBinds;
+	// map arguments to blocks (in same order as in arguments list)
+	private final List<BlockNode> blockBinds;
 
 	public PhiInsn(int regNum, int predecessors) {
-		super(InsnType.PHI, predecessors);
-		this.blockBinds = new LinkedHashMap<>(predecessors);
+		this(predecessors);
 		setResult(InsnArg.reg(regNum, ArgType.UNKNOWN));
 		add(AFlag.DONT_INLINE);
 		add(AFlag.DONT_GENERATE);
+	}
+
+	private PhiInsn(int argsCount) {
+		super(InsnType.PHI, argsCount);
+		this.blockBinds = new ArrayList<>(argsCount);
 	}
 
 	public RegisterArg bindArg(BlockNode pred) {
@@ -34,19 +40,24 @@ public final class PhiInsn extends InsnNode {
 	}
 
 	public void bindArg(RegisterArg arg, BlockNode pred) {
-		if (blockBinds.containsValue(pred)) {
+		if (blockBinds.contains(pred)) {
 			throw new JadxRuntimeException("Duplicate predecessors in PHI insn: " + pred + ", " + this);
 		}
-		addArg(arg);
-		blockBinds.put(arg, pred);
+		super.addArg(arg);
+		blockBinds.add(pred);
 	}
 
+	@Nullable
 	public BlockNode getBlockByArg(RegisterArg arg) {
-		return blockBinds.get(arg);
+		int index = getArgIndex(arg);
+		if (index == -1) {
+			return null;
+		}
+		return blockBinds.get(index);
 	}
 
-	public Map<RegisterArg, BlockNode> getBlockBinds() {
-		return blockBinds;
+	public BlockNode getBlockByArgIndex(int argIndex) {
+		return blockBinds.get(argIndex);
 	}
 
 	@Override
@@ -57,17 +68,34 @@ public final class PhiInsn extends InsnNode {
 
 	@Override
 	public boolean removeArg(InsnArg arg) {
-		if (!(arg instanceof RegisterArg)) {
+		int index = getArgIndex(arg);
+		if (index == -1) {
 			return false;
 		}
-		RegisterArg reg = (RegisterArg) arg;
-		if (super.removeArg(reg)) {
-			blockBinds.remove(reg);
-			reg.getSVar().removeUse(reg);
-			InsnRemover.fixUsedInPhiFlag(reg);
-			return true;
+		removeArg(index);
+		return true;
+	}
+
+	@Override
+	public RegisterArg removeArg(int index) {
+		RegisterArg reg = (RegisterArg) super.removeArg(index);
+		blockBinds.remove(index);
+		reg.getSVar().updateUsedInPhiList();
+		return reg;
+	}
+
+	@Nullable
+	public RegisterArg getArgBySsaVar(SSAVar ssaVar) {
+		if (getArgsCount() == 0) {
+			return null;
 		}
-		return false;
+		for (InsnArg insnArg : getArguments()) {
+			RegisterArg reg = (RegisterArg) insnArg;
+			if (reg.getSVar() == ssaVar) {
+				return reg;
+			}
+		}
+		return null;
 	}
 
 	@Override
@@ -75,21 +103,36 @@ public final class PhiInsn extends InsnNode {
 		if (!(from instanceof RegisterArg) || !(to instanceof RegisterArg)) {
 			return false;
 		}
-		BlockNode pred = getBlockByArg((RegisterArg) from);
+
+		int argIndex = getArgIndex(from);
+		if (argIndex == -1) {
+			return false;
+		}
+		BlockNode pred = getBlockByArgIndex(argIndex);
 		if (pred == null) {
 			throw new JadxRuntimeException("Unknown predecessor block by arg " + from + " in PHI: " + this);
 		}
-		if (removeArg(from)) {
-			RegisterArg reg = (RegisterArg) to;
-			bindArg(reg, pred);
-			reg.getSVar().setUsedInPhi(this);
-		}
+		removeArg(argIndex);
+
+		RegisterArg reg = (RegisterArg) to;
+		bindArg(reg, pred);
+		reg.getSVar().addUsedInPhi(this);
 		return true;
 	}
 
 	@Override
+	public void addArg(InsnArg arg) {
+		throw new JadxRuntimeException("Direct addArg is forbidden for PHI insn, bindArg must be used");
+	}
+
+	@Override
 	public void setArg(int n, InsnArg arg) {
-		throw new JadxRuntimeException("Unsupported operation for PHI node");
+		throw new JadxRuntimeException("Direct setArg is forbidden for PHI insn, bindArg must be used");
+	}
+
+	@Override
+	public InsnNode copy() {
+		return copyCommonParams(new PhiInsn(getArgsCount()));
 	}
 
 	@Override

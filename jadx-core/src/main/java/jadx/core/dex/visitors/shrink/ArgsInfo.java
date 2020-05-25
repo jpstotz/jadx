@@ -8,7 +8,6 @@ import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.args.InsnArg;
 import jadx.core.dex.instructions.args.InsnWrapArg;
 import jadx.core.dex.instructions.args.RegisterArg;
-import jadx.core.dex.instructions.mods.ConstructorInsn;
 import jadx.core.dex.instructions.mods.TernaryInsn;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.utils.EmptyBitSet;
@@ -37,9 +36,7 @@ final class ArgsInfo {
 	}
 
 	private static void addArgs(InsnNode insn, List<RegisterArg> args) {
-		if (insn.getType() == InsnType.CONSTRUCTOR) {
-			args.add(((ConstructorInsn) insn).getInstanceArg());
-		} else if (insn.getType() == InsnType.TERNARY) {
+		if (insn.getType() == InsnType.TERNARY) {
 			args.addAll(((TernaryInsn) insn).getCondition().getRegisterArgs());
 		}
 		for (InsnArg arg : insn.getArguments()) {
@@ -93,14 +90,21 @@ final class ArgsInfo {
 				movedSet.set(arg.getRegNum());
 			}
 		}
+		boolean canReorder = startInfo.insn.canReorder();
 		for (int i = start; i < to; i++) {
 			ArgsInfo argsInfo = argsList.get(i);
 			if (argsInfo.getInlinedInsn() == this) {
 				continue;
 			}
 			InsnNode curInsn = argsInfo.insn;
-			if (!curInsn.canReorder() || usedArgAssign(curInsn, movedSet)) {
-				return false;
+			if (canReorder) {
+				if (usedArgAssign(curInsn, movedSet)) {
+					return false;
+				}
+			} else {
+				if (!curInsn.canReorder() || usedArgAssign(curInsn, movedSet)) {
+					return false;
+				}
 			}
 		}
 		return true;
@@ -111,7 +115,7 @@ final class ArgsInfo {
 			return false;
 		}
 		RegisterArg result = insn.getResult();
-		if (result == null || result.isField()) {
+		if (result == null) {
 			return false;
 		}
 		return args.get(result.getRegNum());

@@ -7,8 +7,8 @@ import java.util.Objects;
 
 import org.jetbrains.annotations.NotNull;
 
+import jadx.api.ICodeInfo;
 import jadx.api.ResourceFile;
-import jadx.core.codegen.CodeWriter;
 
 public class ResContainer implements Comparable<ResContainer> {
 
@@ -21,7 +21,7 @@ public class ResContainer implements Comparable<ResContainer> {
 	private final Object data;
 	private final List<ResContainer> subFiles;
 
-	public static ResContainer textResource(String name, CodeWriter content) {
+	public static ResContainer textResource(String name, ICodeInfo content) {
 		return new ResContainer(name, Collections.emptyList(), content, DataType.TEXT);
 	}
 
@@ -33,7 +33,7 @@ public class ResContainer implements Comparable<ResContainer> {
 		return new ResContainer(resFile.getName(), Collections.emptyList(), resFile, DataType.RES_LINK);
 	}
 
-	public static ResContainer resourceTable(String name, List<ResContainer> subFiles, CodeWriter rootContent) {
+	public static ResContainer resourceTable(String name, List<ResContainer> subFiles, ICodeInfo rootContent) {
 		return new ResContainer(name, subFiles, rootContent, DataType.RES_TABLE);
 	}
 
@@ -60,8 +60,8 @@ public class ResContainer implements Comparable<ResContainer> {
 		return dataType;
 	}
 
-	public CodeWriter getText() {
-		return (CodeWriter) data;
+	public ICodeInfo getText() {
+		return (ICodeInfo) data;
 	}
 
 	public byte[] getDecodedData() {

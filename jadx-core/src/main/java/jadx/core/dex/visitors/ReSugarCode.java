@@ -89,7 +89,7 @@ public class ReSugarCode extends AbstractVisitor {
 	}
 
 	/**
-	 * Replace new array and sequence of array-put to new filled-array instruction.
+	 * Replace new-array and sequence of array-put to new filled-array instruction.
 	 */
 	private static void processNewArray(MethodNode mth, NewArrayNode newArrayInsn,
 			List<InsnNode> instructions, InsnRemover remover) {
@@ -135,15 +135,16 @@ public class ReSugarCode extends AbstractVisitor {
 		// checks complete, apply
 		ArgType arrType = newArrayInsn.getArrayType();
 		InsnNode filledArr = new FilledNewArrayNode(arrType.getArrayElement(), len);
-		filledArr.setResult(arrArg);
-		for (InsnNode put : arrPuts) {
-			filledArr.addArg(put.getArg(2));
-			remover.addWithoutUnbind(put);
-			InsnRemover.unbindArgUsage(mth, put.getArg(0));
-		}
-		remover.addWithoutUnbind(newArrayInsn);
+		filledArr.setResult(arrArg.duplicate());
 
-		int replaceIndex = InsnList.getIndex(instructions, Utils.last(arrPuts));
+		for (InsnNode put : arrPuts) {
+			filledArr.addArg(put.getArg(2).duplicate());
+			remover.addAndUnbind(put);
+		}
+		remover.addAndUnbind(newArrayInsn);
+
+		InsnNode lastPut = Utils.last(arrPuts);
+		int replaceIndex = InsnList.getIndex(instructions, lastPut);
 		instructions.set(replaceIndex, filledArr);
 	}
 
@@ -155,27 +156,12 @@ public class ReSugarCode extends AbstractVisitor {
 			return false;
 		}
 		InsnArg indexArg = insn.getArg(1);
-		int index = -1;
-		if (indexArg.isLiteral()) {
-			index = (int) ((LiteralArg) indexArg).getLiteral();
-		} else if (indexArg.isRegister()) {
-			RegisterArg reg = (RegisterArg) indexArg;
-			index = getIntConst(reg.getConstValue(mth.dex()));
-		} else if (indexArg.isInsnWrap()) {
-			InsnNode constInsn = ((InsnWrapArg) indexArg).getWrapInsn();
-			index = getIntConst(InsnUtils.getConstValueByInsn(mth.dex(), constInsn));
+		Object value = InsnUtils.getConstValueByArg(mth.dex(), indexArg);
+		if (value instanceof LiteralArg) {
+			int index = (int) ((LiteralArg) value).getLiteral();
+			return index == putIndex;
 		}
-		return index == putIndex;
-	}
-
-	private static int getIntConst(Object value) {
-		if (value instanceof Integer) {
-			return (Integer) value;
-		}
-		if (value instanceof Long) {
-			return ((Long) value).intValue();
-		}
-		return -1;
+		return false;
 	}
 
 	private static void processEnumSwitch(MethodNode mth, SwitchNode insn) {

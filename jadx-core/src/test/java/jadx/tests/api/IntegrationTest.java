@@ -6,8 +6,8 @@ import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -20,13 +20,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.jar.JarOutputStream;
 
+import org.jetbrains.annotations.NotNull;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 
+import jadx.api.ICodeInfo;
 import jadx.api.JadxArgs;
 import jadx.api.JadxDecompiler;
 import jadx.api.JadxInternalAccess;
 import jadx.core.ProcessClass;
 import jadx.core.codegen.CodeGen;
+import jadx.core.codegen.CodeWriter;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.AttrList;
@@ -34,8 +38,8 @@ import jadx.core.dex.attributes.IAttributeNode;
 import jadx.core.dex.nodes.ClassNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.nodes.RootNode;
-import jadx.core.dex.visitors.DepthTraversal;
-import jadx.core.dex.visitors.IDexTreeVisitor;
+import jadx.core.utils.DebugChecks;
+import jadx.core.utils.Utils;
 import jadx.core.utils.files.FileUtils;
 import jadx.core.xmlgen.ResourceStorage;
 import jadx.core.xmlgen.entry.ResourceEntry;
@@ -44,6 +48,8 @@ import jadx.tests.api.compiler.StaticCompiler;
 import jadx.tests.api.utils.TestUtils;
 
 import static jadx.core.utils.files.FileUtils.addFileToJar;
+import static org.apache.commons.lang3.StringUtils.leftPad;
+import static org.apache.commons.lang3.StringUtils.rightPad;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
@@ -81,7 +87,22 @@ public abstract class IntegrationTest extends TestUtils {
 	protected boolean useEclipseCompiler;
 	protected Map<Integer, String> resMap = Collections.emptyMap();
 
+	private boolean allowWarnInCode;
+	private boolean printLineNumbers;
+	private boolean printSmali;
+
 	private DynamicCompiler dynamicCompiler;
+
+	static {
+		// needed for post decompile check
+		AType.SKIP_ON_UNLOAD.addAll(Arrays.asList(
+				AType.JADX_ERROR,
+				AType.JADX_WARN,
+				AType.COMMENTS));
+
+		// enable debug checks
+		DebugChecks.checksEnabled = true;
+	}
 
 	@BeforeEach
 	public void init() {
@@ -98,6 +119,11 @@ public abstract class IntegrationTest extends TestUtils {
 		args.setThreadsCount(1);
 		args.setSkipResources(true);
 		args.setFsCaseSensitive(false); // use same value on all systems
+	}
+
+	@AfterEach
+	public void after() {
+		FileUtils.clearTempRootDir();
 	}
 
 	public String getTestName() {
@@ -142,7 +168,7 @@ public abstract class IntegrationTest extends TestUtils {
 	}
 
 	protected JadxDecompiler loadFiles(List<File> inputFiles) {
-		JadxDecompiler d = null;
+		JadxDecompiler d;
 		try {
 			args.setInputFiles(inputFiles);
 			d = new JadxDecompiler(args);
@@ -159,20 +185,50 @@ public abstract class IntegrationTest extends TestUtils {
 
 	protected void decompileAndCheck(JadxDecompiler d, List<ClassNode> clsList) {
 		if (unloadCls) {
-			clsList.forEach(cls -> decompile(d, cls));
+			clsList.forEach(ClassNode::decompile);
 		} else {
 			clsList.forEach(cls -> decompileWithoutUnload(d, cls));
 		}
 
 		for (ClassNode cls : clsList) {
 			System.out.println("-----------------------------------------------------------");
-			System.out.println(cls.getCode());
+			if (printLineNumbers) {
+				printCodeWithLineNumbers(cls.getCode());
+			} else {
+				System.out.println(cls.getCode());
+			}
 		}
 		System.out.println("-----------------------------------------------------------");
 
-		clsList.forEach(IntegrationTest::checkCode);
+		if (printSmali) {
+			clsList.forEach(this::printSmali);
+		}
+
+		clsList.forEach(this::checkCode);
 		compile(clsList);
 		clsList.forEach(this::runAutoCheck);
+	}
+
+	private void printSmali(ClassNode cls) {
+		System.out.println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+		System.out.println(cls.getSmali());
+		System.out.println("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++");
+	}
+
+	private void printCodeWithLineNumbers(ICodeInfo code) {
+		String codeStr = code.getCodeStr();
+		Map<Integer, Integer> lineMapping = code.getLineMapping();
+		String[] lines = codeStr.split(CodeWriter.NL);
+		for (int i = 0; i < lines.length; i++) {
+			String line = lines[i];
+			int curLine = i + 1;
+			String lineNumStr = "/* " + leftPad(String.valueOf(curLine), 3) + " */";
+			Integer sourceLine = lineMapping.get(curLine);
+			if (sourceLine != null) {
+				lineNumStr += " /* " + sourceLine + " */";
+			}
+			System.out.println(rightPad(lineNumStr, 20) + line);
+		}
 	}
 
 	private void insertResources(RootNode root) {
@@ -189,48 +245,46 @@ public abstract class IntegrationTest extends TestUtils {
 		root.processResources(resStorage);
 	}
 
-	protected void decompile(JadxDecompiler jadx, ClassNode cls) {
-		List<IDexTreeVisitor> passes = JadxInternalAccess.getPassList(jadx);
-		ProcessClass.process(cls, passes, true);
-	}
-
 	protected void decompileWithoutUnload(JadxDecompiler jadx, ClassNode cls) {
-		cls.load();
-		for (IDexTreeVisitor visitor : JadxInternalAccess.getPassList(jadx)) {
-			DepthTraversal.visit(visitor, cls);
-		}
+		ProcessClass.process(cls);
 		generateClsCode(cls);
 		// don't unload class
 	}
 
 	protected void generateClsCode(ClassNode cls) {
 		try {
-			CodeGen.generate(cls);
+			ICodeInfo code = CodeGen.generate(cls);
+			cls.root().getCodeCache().add(cls.getTopParentClass().getRawName(), code);
 		} catch (Exception e) {
 			e.printStackTrace();
 			fail(e.getMessage());
 		}
 	}
 
-	protected static void checkCode(ClassNode cls) {
+	protected void checkCode(ClassNode cls) {
 		assertFalse(hasErrors(cls), "Inconsistent cls: " + cls);
 		for (MethodNode mthNode : cls.getMethods()) {
-			assertFalse(hasErrors(mthNode), "Method with problems: " + mthNode);
+			if (hasErrors(mthNode)) {
+				fail("Method with problems: " + mthNode
+						+ "\n " + Utils.listToString(mthNode.getAttributesStringsList(), "\n "));
+			}
 		}
 		assertThat(cls.getCode().toString(), not(containsString("inconsistent")));
 	}
 
-	private static boolean hasErrors(IAttributeNode node) {
+	private boolean hasErrors(IAttributeNode node) {
 		if (node.contains(AFlag.INCONSISTENT_CODE)
 				|| node.contains(AType.JADX_ERROR)
-				|| node.contains(AType.JADX_WARN)) {
+				|| (node.contains(AType.JADX_WARN) && !allowWarnInCode)) {
 			return true;
 		}
-		AttrList<String> commentsAttr = node.get(AType.COMMENTS);
-		if (commentsAttr != null) {
-			for (String comment : commentsAttr.getList()) {
-				if (comment.contains("JADX WARN")) {
-					return true;
+		if (!allowWarnInCode) {
+			AttrList<String> commentsAttr = node.get(AType.COMMENTS);
+			if (commentsAttr != null) {
+				for (String comment : commentsAttr.getList()) {
+					if (comment.contains("JADX WARN")) {
+						return true;
+					}
 				}
 			}
 		}
@@ -349,7 +403,7 @@ public abstract class IntegrationTest extends TestUtils {
 		return dynamicCompiler.invoke(cls, methodName, types, args);
 	}
 
-	public File getJarForClass(Class<?> cls) throws IOException {
+	private File getJarForClass(Class<?> cls) throws IOException {
 		List<File> files = compileClass(cls);
 		assertThat("File list is empty", files, not(empty()));
 
@@ -370,7 +424,7 @@ public abstract class IntegrationTest extends TestUtils {
 				temp = FileUtils.createTempFile(suffix);
 			} else {
 				// don't delete on exit
-				temp = Files.createTempFile("jadx", suffix);
+				temp = FileUtils.createTempFileNoDelete(suffix);
 				System.out.println("Temporary file saved: " + temp.toAbsolutePath());
 			}
 			return temp.toFile();
@@ -403,6 +457,13 @@ public abstract class IntegrationTest extends TestUtils {
 		String clsName = clsFullName.substring(clsFullName.lastIndexOf('.') + 1);
 		files.removeIf(next -> !next.getName().contains(clsName));
 		return files;
+	}
+
+	@NotNull
+	protected static String removeLineComments(ClassNode cls) {
+		String code = cls.getCode().getCodeStr().replaceAll("\\W*//.*", "");
+		System.out.println(code);
+		return code;
 	}
 
 	public JadxArgs getArgs() {
@@ -444,11 +505,25 @@ public abstract class IntegrationTest extends TestUtils {
 		args.setDeobfuscationMaxLength(64);
 	}
 
+	protected void allowWarnInCode() {
+		allowWarnInCode = true;
+	}
+
+	protected void printLineNumbers() {
+		printLineNumbers = true;
+	}
+
 	// Use only for debug purpose
 	@Deprecated
 	protected void outputCFG() {
 		this.args.setCfgOutput(true);
 		this.args.setRawCFGOutput(true);
+	}
+
+	// Use only for debug purpose
+	@Deprecated
+	protected void printSmali() {
+		this.printSmali = true;
 	}
 
 	// Use only for debug purpose

@@ -64,7 +64,7 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 		mth.getSVars().forEach(var -> {
 			ArgType type = var.getTypeInfo().getType();
 			if (!type.isTypeKnown()) {
-				mth.addComment("JADX WARNING: type inference failed for: " + var.getDetailedVarInfo(mth));
+				mth.addWarnComment("Type inference failed for: " + var.getDetailedVarInfo(mth));
 			}
 		});
 	}
@@ -90,7 +90,7 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 			RegDebugInfoAttr debugInfo = debugInfoSet.iterator().next();
 			applyDebugInfo(mth, ssaVar, debugInfo.getRegType(), debugInfo.getName());
 		} else {
-			LOG.warn("Multiple debug info for {}: {}", ssaVar, debugInfoSet);
+			mth.addComment("JADX INFO: Multiple debug info for " + ssaVar + ": " + debugInfoSet);
 			for (RegDebugInfoAttr debugInfo : debugInfoSet) {
 				applyDebugInfo(mth, ssaVar, debugInfo.getRegType(), debugInfo.getName());
 			}
@@ -143,21 +143,13 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 	public static void applyDebugInfo(MethodNode mth, SSAVar ssaVar, ArgType type, String varName) {
 		TypeUpdateResult result = mth.root().getTypeUpdate().applyWithWiderAllow(ssaVar, type);
 		if (result == TypeUpdateResult.REJECT) {
-			if (LOG.isDebugEnabled()) {
+			if (Consts.DEBUG) {
 				LOG.debug("Reject debug info of type: {} and name: '{}' for {}, mth: {}", type, varName, ssaVar, mth);
 			}
 		} else {
 			if (NameMapper.isValidAndPrintable(varName)) {
 				ssaVar.setName(varName);
 			}
-			detachDebugInfo(ssaVar.getAssign());
-			ssaVar.getUseList().forEach(DebugInfoApplyVisitor::detachDebugInfo);
-		}
-	}
-
-	private static void detachDebugInfo(RegisterArg reg) {
-		if (reg != null) {
-			reg.remove(AType.REG_DEBUG_INFO);
 		}
 	}
 
@@ -172,7 +164,7 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 	 * Fix debug info for splitter 'return' instructions
 	 */
 	private static void fixLinesForReturn(MethodNode mth) {
-		if (mth.getReturnType().equals(ArgType.VOID)) {
+		if (mth.isVoidReturn()) {
 			return;
 		}
 		InsnNode origReturn = null;
@@ -203,8 +195,7 @@ public class DebugInfoApplyVisitor extends AbstractVisitor {
 
 	private static void fixNamesForPhiInsns(MethodNode mth) {
 		mth.getSVars().forEach(ssaVar -> {
-			PhiInsn phiInsn = ssaVar.getUsedInPhi();
-			if (phiInsn != null) {
+			for (PhiInsn phiInsn : ssaVar.getUsedInPhi()) {
 				Set<String> names = new HashSet<>(1 + phiInsn.getArgsCount());
 				addArgName(phiInsn.getResult(), names);
 				phiInsn.getArguments().forEach(arg -> addArgName(arg, names));

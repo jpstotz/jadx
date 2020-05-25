@@ -12,12 +12,12 @@ import jadx.api.ResourceFile;
 import jadx.gui.JadxWrapper;
 import jadx.gui.treemodel.JResource.JResType;
 import jadx.gui.utils.NLS;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 
 public class JRoot extends JNode {
 	private static final long serialVersionUID = 8888495789773527342L;
 
-	private static final ImageIcon ROOT_ICON = Utils.openIcon("java_model_obj");
+	private static final ImageIcon ROOT_ICON = UiUtils.openIcon("java_model_obj");
 
 	private final transient JadxWrapper wrapper;
 
@@ -41,11 +41,6 @@ public class JRoot extends JNode {
 		ApkSignature signature = ApkSignature.getApkSignature(wrapper);
 		if (signature != null) {
 			add(signature);
-		}
-
-		JCertificate certificate = getCertificate(wrapper.getResources());
-		if (certificate != null) {
-			add(certificate);
 		}
 	}
 
@@ -80,22 +75,6 @@ public class JRoot extends JNode {
 			}
 		}
 		return Collections.singletonList(root);
-	}
-
-	private JCertificate getCertificate(List<ResourceFile> resources) {
-		if (resources.isEmpty()) {
-			return null;
-		}
-		for (ResourceFile rf : resources) {
-
-			if (rf.getZipRef() != null) {
-				String rfName = rf.getName().toUpperCase();
-				if (rfName.endsWith(".DSA") || rfName.endsWith(".RSA")) {
-					return new JCertificate(rf);
-				}
-			}
-		}
-		return null;
 	}
 
 	private JResource getResourceByName(JResource rf, String name) {

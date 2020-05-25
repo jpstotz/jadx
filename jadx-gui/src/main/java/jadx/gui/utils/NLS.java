@@ -34,6 +34,7 @@ public class NLS {
 		LANG_LOCALES.add(new LangLocale("en", "US")); // As default language
 		LANG_LOCALES.add(new LangLocale("zh", "CN"));
 		LANG_LOCALES.add(new LangLocale("es", "ES"));
+		LANG_LOCALES.add(new LangLocale("de", "DE"));
 
 		LANG_LOCALES.forEach(NLS::load);
 
@@ -59,6 +60,14 @@ public class NLS {
 			throw new JadxRuntimeException("Failed to load " + resName, e);
 		}
 		LANG_LOCALES_MAP.put(locale, bundle);
+	}
+
+	public static String str(String key) {
+		try {
+			return localizedMessagesMap.getString(key);
+		} catch (Exception e) {
+			return FALLBACK_MESSAGES_MAP.getString(key);
+		}
 	}
 
 	public static String str(String key, Object... parameters) {

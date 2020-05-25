@@ -1,23 +1,24 @@
 package jadx.gui.treemodel;
 
-import javax.swing.*;
+import javax.swing.Icon;
+import javax.swing.ImageIcon;
 
 import jadx.api.JavaField;
 import jadx.api.JavaNode;
 import jadx.core.dex.info.AccessInfo;
 import jadx.gui.utils.OverlayIcon;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 
 public class JField extends JNode {
 	private static final long serialVersionUID = 1712572192106793359L;
 
-	private static final ImageIcon ICON_FLD_DEF = Utils.openIcon("field_default_obj");
-	private static final ImageIcon ICON_FLD_PRI = Utils.openIcon("field_private_obj");
-	private static final ImageIcon ICON_FLD_PRO = Utils.openIcon("field_protected_obj");
-	private static final ImageIcon ICON_FLD_PUB = Utils.openIcon("field_public_obj");
+	private static final ImageIcon ICON_FLD_DEF = UiUtils.openIcon("field_default_obj");
+	private static final ImageIcon ICON_FLD_PRI = UiUtils.openIcon("field_private_obj");
+	private static final ImageIcon ICON_FLD_PRO = UiUtils.openIcon("field_protected_obj");
+	private static final ImageIcon ICON_FLD_PUB = UiUtils.openIcon("field_public_obj");
 
-	private static final ImageIcon ICON_TRANSIENT = Utils.openIcon("transient_co");
-	private static final ImageIcon ICON_VOLATILE = Utils.openIcon("volatile_co");
+	private static final ImageIcon ICON_TRANSIENT = UiUtils.openIcon("transient_co");
+	private static final ImageIcon ICON_VOLATILE = UiUtils.openIcon("volatile_co");
 
 	private final transient JavaField field;
 	private final transient JClass jParent;
@@ -50,7 +51,7 @@ public class JField extends JNode {
 	@Override
 	public Icon getIcon() {
 		AccessInfo af = field.getAccessFlags();
-		OverlayIcon icon = Utils.makeIcon(af, ICON_FLD_PUB, ICON_FLD_PRI, ICON_FLD_PRO, ICON_FLD_DEF);
+		OverlayIcon icon = UiUtils.makeIcon(af, ICON_FLD_PUB, ICON_FLD_PRI, ICON_FLD_PRO, ICON_FLD_DEF);
 		if (af.isTransient()) {
 			icon.add(ICON_TRANSIENT);
 		}
@@ -62,12 +63,32 @@ public class JField extends JNode {
 
 	@Override
 	public String makeString() {
-		return Utils.typeFormat(field.getName(), field.getType());
+		return UiUtils.typeFormat(field.getName(), field.getType());
+	}
+
+	@Override
+	public String makeStringHtml() {
+		return UiUtils.typeFormatHtml(field.getName(), field.getType());
 	}
 
 	@Override
 	public String makeLongString() {
-		return Utils.typeFormat(field.getFullName(), field.getType());
+		return UiUtils.typeFormat(field.getFullName(), field.getType());
+	}
+
+	@Override
+	public String makeLongStringHtml() {
+		return UiUtils.typeFormatHtml(field.getFullName(), field.getType());
+	}
+
+	@Override
+	public String makeDescString() {
+		return UiUtils.typeStr(field.getType()) + " " + field.getName();
+	}
+
+	@Override
+	public boolean hasDescString() {
+		return true;
 	}
 
 	@Override

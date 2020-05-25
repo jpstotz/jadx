@@ -1,14 +1,17 @@
 package jadx.gui;
 
-import javax.swing.*;
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.cli.LogHelper;
 import jadx.gui.settings.JadxSettings;
 import jadx.gui.settings.JadxSettingsAdapter;
 import jadx.gui.ui.MainWindow;
 import jadx.gui.utils.NLS;
+import jadx.gui.utils.SystemInfo;
 import jadx.gui.utils.logs.LogCollector;
 
 public class JadxGUI {
@@ -18,6 +21,7 @@ public class JadxGUI {
 		try {
 			LogCollector.register();
 			final JadxSettings settings = JadxSettingsAdapter.load();
+			settings.setLogLevel(LogHelper.LogLevelEnum.INFO);
 			// overwrite loaded settings by command line arguments
 			if (!settings.overrideProvided(args)) {
 				return;
@@ -26,6 +30,8 @@ public class JadxGUI {
 				UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
 			}
 			NLS.setLocale(settings.getLangLocale());
+			printSystemInfo();
+
 			SwingUtilities.invokeLater(new MainWindow(settings)::init);
 		} catch (Exception e) {
 			LOG.error("Error: {}", e.getMessage(), e);
@@ -44,5 +50,14 @@ public class JadxGUI {
 			}
 		}
 		return false;
+	}
+
+	private static void printSystemInfo() {
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("Starting jadx-gui. Version: '{}'. JVM: {} {}. OS: {} {}",
+					SystemInfo.JADX_VERSION,
+					SystemInfo.JAVA_VM, SystemInfo.JAVA_VER,
+					SystemInfo.OS_NAME, SystemInfo.OS_VERSION);
+		}
 	}
 }

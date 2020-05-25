@@ -16,6 +16,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.api.ResourceFile.ZipRef;
+import jadx.api.impl.SimpleCodeInfo;
 import jadx.core.codegen.CodeWriter;
 import jadx.core.utils.Utils;
 import jadx.core.utils.android.Res9patchStreamDecoder;
@@ -84,8 +85,8 @@ public final class ResourcesLoader {
 			LOG.error("Decode error", e);
 			CodeWriter cw = new CodeWriter();
 			cw.add("Error decode ").add(rf.getType().toString().toLowerCase());
-			cw.startLine(Utils.getStackTrace(e.getCause()));
-			return ResContainer.textResource(rf.getName(), cw);
+			Utils.appendStackTrace(cw, e.getCause());
+			return ResContainer.textResource(rf.getName(), cw.finish());
 		}
 	}
 
@@ -94,7 +95,7 @@ public final class ResourcesLoader {
 		switch (rf.getType()) {
 			case MANIFEST:
 			case XML:
-				CodeWriter content = jadxRef.getXmlParser().parse(inputStream);
+				ICodeInfo content = jadxRef.getXmlParser().parse(inputStream);
 				return ResContainer.textResource(rf.getName(), content);
 
 			case ARSC:
@@ -111,9 +112,8 @@ public final class ResourcesLoader {
 	private static ResContainer decodeImage(ResourceFile rf, InputStream inputStream) {
 		String name = rf.getName();
 		if (name.endsWith(".9.png")) {
-			Res9patchStreamDecoder decoder = new Res9patchStreamDecoder();
-			ByteArrayOutputStream os = new ByteArrayOutputStream();
-			try {
+			try (ByteArrayOutputStream os = new ByteArrayOutputStream()) {
+				Res9patchStreamDecoder decoder = new Res9patchStreamDecoder();
 				decoder.decode(inputStream, os);
 				return ResContainer.decodedData(rf.getName(), os.toByteArray());
 			} catch (Exception e) {
@@ -163,11 +163,10 @@ public final class ResourcesLoader {
 		}
 	}
 
-	public static CodeWriter loadToCodeWriter(InputStream is) throws IOException {
-		CodeWriter cw = new CodeWriter();
+	@SuppressWarnings("CharsetObjectCanBeUsed")
+	public static ICodeInfo loadToCodeWriter(InputStream is) throws IOException {
 		ByteArrayOutputStream baos = new ByteArrayOutputStream(READ_BUFFER_SIZE);
 		copyStream(is, baos);
-		cw.add(baos.toString("UTF-8"));
-		return cw;
+		return new SimpleCodeInfo(baos.toString("UTF-8"));
 	}
 }

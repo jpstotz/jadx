@@ -107,10 +107,15 @@ public class SSATransform extends AbstractVisitor {
 		}
 		int size = block.getPredecessors().size();
 		if (mth.getEnterBlock() == block) {
-			for (RegisterArg arg : mth.getArguments(true)) {
-				if (arg.getRegNum() == regNum) {
-					size++;
-					break;
+			RegisterArg thisArg = mth.getThisArg();
+			if (thisArg != null && thisArg.getRegNum() == regNum) {
+				size++;
+			} else {
+				for (RegisterArg arg : mth.getArgRegs()) {
+					if (arg.getRegNum() == regNum) {
+						size++;
+						break;
+					}
 				}
 			}
 		}
@@ -187,7 +192,7 @@ public class SSATransform extends AbstractVisitor {
 		}
 		RegisterArg arg = phiInsn.bindArg(state.getBlock());
 		var.use(arg);
-		var.setUsedInPhi(phiInsn);
+		var.addUsedInPhi(phiInsn);
 	}
 
 	/**
@@ -323,7 +328,7 @@ public class SSATransform extends AbstractVisitor {
 						}
 						SSAVar sVar = ((RegisterArg) arg).getSVar();
 						if (sVar != null) {
-							sVar.setUsedInPhi(null);
+							sVar.removeUsedInPhi(phiInsn);
 						}
 					}
 					InsnRemover.remove(mth, block, phiInsn);
@@ -347,13 +352,13 @@ public class SSATransform extends AbstractVisitor {
 		SSAVar argVar = arg.getSVar();
 		if (argVar != null) {
 			argVar.removeUse(arg);
-			argVar.setUsedInPhi(null);
+			argVar.removeUsedInPhi(phi);
 		}
 		// try inline
 		if (inlinePhiInsn(mth, block, phi)) {
 			insns.remove(phiIndex);
 		} else {
-			assign.setUsedInPhi(null);
+			assign.removeUsedInPhi(phi);
 
 			InsnNode m = new InsnNode(InsnType.MOVE, 1);
 			m.add(AFlag.SYNTHETIC);
@@ -377,22 +382,18 @@ public class SSATransform extends AbstractVisitor {
 		List<RegisterArg> useList = resVar.getUseList();
 		for (RegisterArg useArg : new ArrayList<>(useList)) {
 			InsnNode useInsn = useArg.getParentInsn();
-			if (useInsn == null || useInsn == phi) {
+			if (useInsn == null || useInsn == phi || useArg.getRegNum() != arg.getRegNum()) {
 				return false;
 			}
+			// replace SSAVar in 'useArg' to SSAVar from 'arg'
+			// no need to replace whole RegisterArg
 			useArg.getSVar().removeUse(useArg);
-			RegisterArg inlArg = arg.duplicate();
-			if (!useInsn.replaceArg(useArg, inlArg)) {
-				return false;
-			}
-			inlArg.getSVar().use(inlArg);
-			inlArg.setName(useArg.getName());
-			inlArg.setType(useArg.getType());
+			arg.getSVar().use(useArg);
 		}
 		if (block.contains(AType.EXC_HANDLER)) {
 			// don't inline into exception handler
 			InsnNode assignInsn = arg.getAssignInsn();
-			if (assignInsn != null) {
+			if (assignInsn != null && !assignInsn.isConstInsn()) {
 				assignInsn.add(AFlag.DONT_INLINE);
 			}
 		}

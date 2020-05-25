@@ -1,7 +1,6 @@
 package jadx.gui.treemodel;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -10,26 +9,31 @@ import javax.swing.*;
 
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
+import jadx.api.ICodeInfo;
 import jadx.api.ResourceFile;
 import jadx.api.ResourceFileContent;
 import jadx.api.ResourceType;
 import jadx.api.ResourcesLoader;
-import jadx.core.codegen.CodeWriter;
+import jadx.api.impl.SimpleCodeInfo;
+import jadx.core.utils.Utils;
 import jadx.core.xmlgen.ResContainer;
 import jadx.gui.utils.NLS;
 import jadx.gui.utils.OverlayIcon;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
+
+import static jadx.core.codegen.CodeWriter.NL;
 
 public class JResource extends JLoadableNode implements Comparable<JResource> {
 	private static final long serialVersionUID = -201018424302612434L;
 
-	private static final ImageIcon ROOT_ICON = Utils.openIcon("cf_obj");
-	private static final ImageIcon FOLDER_ICON = Utils.openIcon("folder");
-	private static final ImageIcon FILE_ICON = Utils.openIcon("file_obj");
-	private static final ImageIcon MANIFEST_ICON = Utils.openIcon("template_obj");
-	private static final ImageIcon JAVA_ICON = Utils.openIcon("java_ovr");
-	private static final ImageIcon ERROR_ICON = Utils.openIcon("error_co");
+	private static final ImageIcon ROOT_ICON = UiUtils.openIcon("cf_obj");
+	private static final ImageIcon FOLDER_ICON = UiUtils.openIcon("folder");
+	private static final ImageIcon FILE_ICON = UiUtils.openIcon("file_obj");
+	private static final ImageIcon MANIFEST_ICON = UiUtils.openIcon("template_obj");
+	private static final ImageIcon JAVA_ICON = UiUtils.openIcon("java_ovr");
+	private static final ImageIcon ERROR_ICON = UiUtils.openIcon("error_co");
 
 	public enum JResType {
 		ROOT,
@@ -44,8 +48,7 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 	private final transient ResourceFile resFile;
 
 	private transient boolean loaded;
-	private transient String content;
-	private transient Map<Integer, Integer> lineMapping = Collections.emptyMap();
+	private transient ICodeInfo content;
 
 	public JResource(ResourceFile resFile, String name, JResType type) {
 		this(resFile, name, name, type);
@@ -71,7 +74,7 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 		} else {
 			removeAllChildren();
 
-			Comparator<JResource> typeComparator = (r1, r2) -> r1.type.ordinal() - r2.type.ordinal();
+			Comparator<JResource> typeComparator = Comparator.comparingInt(r -> r.type.ordinal());
 			Comparator<JResource> nameComparator = Comparator.comparing(JResource::getName, String.CASE_INSENSITIVE_ORDER);
 
 			files.sort(typeComparator.thenComparing(nameComparator));
@@ -99,9 +102,18 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 	}
 
 	@Override
+	public @Nullable ICodeInfo getCodeInfo() {
+		getContent();
+		return content;
+	}
+
+	@Override
 	public synchronized String getContent() {
 		if (loaded) {
-			return content;
+			if (content == null) {
+				return null;
+			}
+			return content.getCodeStr();
 		}
 		if (resFile == null || type != JResType.FILE) {
 			return null;
@@ -111,6 +123,7 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 		}
 		ResContainer rc = resFile.loadContent();
 		if (rc == null) {
+			loaded = true;
 			return null;
 		}
 		if (rc.getDataType() == ResContainer.DataType.RES_TABLE) {
@@ -118,36 +131,35 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 			for (ResContainer subFile : rc.getSubFiles()) {
 				loadSubNodes(this, subFile, 1);
 			}
-			loaded = true;
-			return content;
+		} else {
+			// single node
+			content = loadCurrentSingleRes(rc);
 		}
-		// single node
-		return loadCurrentSingleRes(rc);
+		loaded = true;
+		return content.getCodeStr();
 	}
 
-	private String loadCurrentSingleRes(ResContainer rc) {
+	private ICodeInfo loadCurrentSingleRes(ResContainer rc) {
 		switch (rc.getDataType()) {
 			case TEXT:
 			case RES_TABLE:
-				CodeWriter cw = rc.getText();
-				lineMapping = cw.getLineMapping();
-				return cw.toString();
+				return rc.getText();
 
 			case RES_LINK:
 				try {
 					return ResourcesLoader.decodeStream(rc.getResLink(), (size, is) -> {
 						if (size > 10 * 1024 * 1024L) {
-							return "File too large for view";
+							return new SimpleCodeInfo("File too large for view");
 						}
-						return ResourcesLoader.loadToCodeWriter(is).toString();
+						return ResourcesLoader.loadToCodeWriter(is);
 					});
 				} catch (Exception e) {
-					return "Failed to load resource file: \n" + jadx.core.utils.Utils.getStackTrace(e);
+					return new SimpleCodeInfo("Failed to load resource file:" + NL + Utils.getStackTrace(e));
 				}
 
 			case DECODED_DATA:
 			default:
-				return "Unexpected resource type: " + rc;
+				return new SimpleCodeInfo("Unexpected resource type: " + rc);
 		}
 	}
 
@@ -155,8 +167,8 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 		String resName = rc.getName();
 		String[] path = resName.split("/");
 		String resShortName = path.length == 0 ? resName : path[path.length - 1];
-		CodeWriter cw = rc.getText();
-		ResourceFileContent fileContent = new ResourceFileContent(resShortName, ResourceType.XML, cw);
+		ICodeInfo code = rc.getText();
+		ResourceFileContent fileContent = new ResourceFileContent(resShortName, ResourceType.XML, code);
 		addPath(path, root, new JResource(fileContent, resName, resShortName, JResType.FILE));
 
 		for (ResContainer subFile : rc.getSubFiles()) {
@@ -190,14 +202,6 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 		JResource resDir = new JResource(null, dirName, JResType.DIR);
 		root.getFiles().add(resDir);
 		return resDir;
-	}
-
-	@Override
-	public Integer getSourceLine(int line) {
-		if (lineMapping == null) {
-			return null;
-		}
-		return lineMapping.get(line);
 	}
 
 	@Override
@@ -289,10 +293,6 @@ public class JResource extends JLoadableNode implements Comparable<JResource> {
 
 	public ResourceFile getResFile() {
 		return resFile;
-	}
-
-	public Map<Integer, Integer> getLineMapping() {
-		return lineMapping;
 	}
 
 	@Override

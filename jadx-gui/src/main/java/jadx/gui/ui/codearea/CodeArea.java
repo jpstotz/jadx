@@ -1,26 +1,26 @@
 package jadx.gui.ui.codearea;
 
+import java.awt.event.InputEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 
-import javax.swing.JPopupMenu;
-import javax.swing.text.Caret;
-import javax.swing.text.DefaultCaret;
+import javax.swing.*;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxDocument;
-import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
-import org.fife.ui.rtextarea.SearchContext;
-import org.fife.ui.rtextarea.SearchEngine;
+import org.fife.ui.rsyntaxtextarea.Token;
+import org.fife.ui.rsyntaxtextarea.TokenTypes;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import jadx.api.CodePosition;
+import jadx.api.JadxDecompiler;
 import jadx.api.JavaNode;
 import jadx.gui.treemodel.JClass;
 import jadx.gui.treemodel.JNode;
 import jadx.gui.ui.ContentPanel;
 import jadx.gui.ui.MainWindow;
+import jadx.gui.utils.JNodeCache;
 import jadx.gui.utils.JumpPosition;
 
 /**
@@ -34,29 +34,29 @@ public final class CodeArea extends AbstractCodeArea {
 
 	CodeArea(ContentPanel contentPanel) {
 		super(contentPanel);
-
-		setMarkOccurrences(true);
-		setEditable(false);
-		loadSettings();
-
-		Caret caret = getCaret();
-		if (caret instanceof DefaultCaret) {
-			((DefaultCaret) caret).setUpdatePolicy(DefaultCaret.ALWAYS_UPDATE);
-		}
-		caret.setVisible(true);
-
 		setSyntaxEditingStyle(node.getSyntaxName());
-		if (node instanceof JClass) {
-			JClass jClsNode = (JClass) this.node;
-			((RSyntaxDocument) getDocument()).setSyntaxStyle(new JadxTokenMaker(this, jClsNode));
 
-			setHyperlinksEnabled(true);
-			CodeLinkGenerator codeLinkProcessor = new CodeLinkGenerator(contentPanel, this, jClsNode);
-			setLinkGenerator(codeLinkProcessor);
-			addHyperlinkListener(codeLinkProcessor);
-			addMenuItems(jClsNode);
+		if (node instanceof JClass) {
+			((RSyntaxDocument) getDocument()).setSyntaxStyle(new JadxTokenMaker(this));
+			addMenuItems();
 		}
-		registerWordHighlighter();
+
+		setHyperlinksEnabled(true);
+		setLinkScanningMask(InputEvent.CTRL_DOWN_MASK);
+		CodeLinkGenerator codeLinkGenerator = new CodeLinkGenerator(this);
+		setLinkGenerator(codeLinkGenerator);
+		addMouseListener(new MouseAdapter() {
+			@Override
+			public void mouseClicked(MouseEvent e) {
+				if (e.isControlDown()) {
+					int offs = viewToModel(e.getPoint());
+					JumpPosition jump = codeLinkGenerator.getJumpLinkAtOffset(CodeArea.this, offs);
+					if (jump != null) {
+						contentPanel.getTabbedPane().codeJump(jump);
+					}
+				}
+			}
+		});
 	}
 
 	@Override
@@ -67,82 +67,110 @@ public final class CodeArea extends AbstractCodeArea {
 		}
 	}
 
-	private void registerWordHighlighter() {
-		addMouseListener(new MouseAdapter() {
-			@Override
-			public void mouseClicked(MouseEvent evt) {
-				if (evt.getClickCount() % 2 == 0 && !evt.isConsumed()) {
-					evt.consume();
-					String str = getSelectedText();
-					if (str != null) {
-						highlightAllMatches(str);
-					}
-				} else {
-					highlightAllMatches(null);
-				}
-			}
-		});
-	}
-
-	/**
-	 * @param str - if null -> reset current highlights
-	 */
-	private void highlightAllMatches(@Nullable String str) {
-		SearchContext context = new SearchContext(str);
-		context.setMarkAll(true);
-		context.setMatchCase(true);
-		context.setWholeWord(true);
-		SearchEngine.markAll(this, context);
-	}
-
-	private void addMenuItems(JClass jCls) {
-		FindUsageAction findUsage = new FindUsageAction(contentPanel, this, jCls);
-		GoToDeclarationAction goToDeclaration = new GoToDeclarationAction(contentPanel, this, jCls);
+	private void addMenuItems() {
+		FindUsageAction findUsage = new FindUsageAction(this);
+		GoToDeclarationAction goToDeclaration = new GoToDeclarationAction(this);
+		RenameAction rename = new RenameAction(this);
 
 		JPopupMenu popup = getPopupMenu();
 		popup.addSeparator();
 		popup.add(findUsage);
 		popup.add(goToDeclaration);
+		popup.add(rename);
 		popup.addPopupMenuListener(findUsage);
 		popup.addPopupMenuListener(goToDeclaration);
+		popup.addPopupMenuListener(rename);
 	}
 
-	public static RSyntaxTextArea getDefaultArea(MainWindow mainWindow) {
-		RSyntaxTextArea area = new RSyntaxTextArea();
-		loadCommonSettings(mainWindow, area);
-		return area;
+	public int adjustOffsetForToken(@Nullable Token token) {
+		if (token == null) {
+			return -1;
+		}
+		int type = token.getType();
+		final int sourceOffset;
+		if (node instanceof JClass) {
+			if (type == TokenTypes.IDENTIFIER) {
+				sourceOffset = token.getOffset();
+			} else if (type == TokenTypes.ANNOTATION && token.length() > 1) {
+				sourceOffset = token.getOffset() + 1;
+			} else {
+				return -1;
+			}
+		} else {
+			if (type == TokenTypes.MARKUP_TAG_ATTRIBUTE_VALUE) {
+				sourceOffset = token.getOffset() + 1; // skip quote at start (")
+			} else {
+				return -1;
+			}
+		}
+		// fast skip
+		if (token.length() == 1) {
+			char ch = token.getTextArray()[token.getTextOffset()];
+			if (ch == '.' || ch == ',' || ch == ';') {
+				return -1;
+			}
+		}
+		return sourceOffset;
 	}
 
 	/**
 	 * Search node by offset in {@code jCls} code and return its definition position
 	 * (useful for jumps from usage)
 	 */
-	public JumpPosition getDefPosForNodeAtOffset(JClass jCls, int offset) {
-		JavaNode foundNode = getJavaNodeAtOffset(jCls, offset);
+	@Nullable
+	public JumpPosition getDefPosForNodeAtOffset(int offset) {
+		if (offset == -1) {
+			return null;
+		}
+		JavaNode foundNode = getJavaNodeAtOffset(offset);
 		if (foundNode == null) {
 			return null;
 		}
-		CodePosition pos = jCls.getCls().getDefinitionPosition(foundNode);
+		CodePosition pos = getDecompiler().getDefinitionPosition(foundNode);
 		if (pos == null) {
 			return null;
 		}
-		JNode jNode = contentPanel.getTabbedPane().getMainWindow().getCacheObject().getNodeCache().makeFrom(foundNode);
+		JNode jNode = convertJavaNode(foundNode);
 		return new JumpPosition(jNode.getRootClass(), pos.getLine());
+	}
+
+	private JNode convertJavaNode(JavaNode javaNode) {
+		JNodeCache nodeCache = getMainWindow().getCacheObject().getNodeCache();
+		return nodeCache.makeFrom(javaNode);
+	}
+
+	@Nullable
+	public JNode getJNodeAtOffset(int offset) {
+		JavaNode javaNode = getJavaNodeAtOffset(offset);
+		if (javaNode != null) {
+			return convertJavaNode(javaNode);
+		}
+		return null;
 	}
 
 	/**
 	 * Search referenced java node by offset in {@code jCls} code
 	 */
-	public JavaNode getJavaNodeAtOffset(JClass jCls, int offset) {
+	public JavaNode getJavaNodeAtOffset(int offset) {
+		if (offset == -1) {
+			return null;
+		}
 		try {
 			// TODO: add direct mapping for code offset to CodeWriter (instead of line and line offset pair)
 			int line = this.getLineOfOffset(offset);
 			int lineOffset = offset - this.getLineStartOffset(line);
-			return jCls.getCls().getJavaNodeAtPosition(line + 1, lineOffset + 1);
+			return node.getJavaNodeAtPosition(getDecompiler(), line + 1, lineOffset + 1);
 		} catch (Exception e) {
 			LOG.error("Can't get java node by offset: {}", offset, e);
 		}
 		return null;
 	}
 
+	public MainWindow getMainWindow() {
+		return contentPanel.getTabbedPane().getMainWindow();
+	}
+
+	private JadxDecompiler getDecompiler() {
+		return getMainWindow().getWrapper().getDecompiler();
+	}
 }

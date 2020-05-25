@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.IBranchRegion;
@@ -22,7 +23,6 @@ import jadx.core.dex.trycatch.ExceptionHandler;
 import jadx.core.dex.trycatch.SplitterBlockAttr;
 import jadx.core.dex.trycatch.TryCatchBlock;
 import jadx.core.utils.BlockUtils;
-import jadx.core.utils.ErrorsCounter;
 import jadx.core.utils.RegionUtils;
 
 /**
@@ -104,7 +104,7 @@ public class ProcessTryCatchRegions extends AbstractRegionVisitor {
 			if (region.getSubBlocks().contains(dominator)) {
 				TryCatchBlock tb = tryBlocksMap.get(dominator);
 				if (!wrapBlocks(region, tb, dominator)) {
-					ErrorsCounter.methodWarn(mth, "Can't wrap try/catch for region: " + region);
+					mth.addWarn("Can't wrap try/catch for region: " + region);
 				}
 				tryBlocksMap.remove(dominator);
 				return true;
@@ -167,6 +167,7 @@ public class ProcessTryCatchRegions extends AbstractRegionVisitor {
 		for (ExceptionHandler h : tb.getHandlers()) {
 			BlockNode handlerBlock = h.getHandlerBlock();
 			if (handlerBlock != null
+					&& !handlerBlock.contains(AFlag.REMOVE)
 					&& RegionUtils.hasPathThroughBlock(handlerBlock, cont)) {
 				return true;
 			}

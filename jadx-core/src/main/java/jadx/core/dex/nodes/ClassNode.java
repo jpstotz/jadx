@@ -1,10 +1,14 @@
 package jadx.core.dex.nodes;
 
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -16,11 +20,13 @@ import com.android.dex.ClassData.Method;
 import com.android.dex.ClassDef;
 import com.android.dex.Dex;
 
+import jadx.api.ICodeCache;
+import jadx.api.ICodeInfo;
 import jadx.core.Consts;
-import jadx.core.codegen.CodeWriter;
+import jadx.core.ProcessClass;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.annotations.Annotation;
-import jadx.core.dex.attributes.nodes.LineAttrNode;
+import jadx.core.dex.attributes.nodes.NotificationAttrNode;
 import jadx.core.dex.attributes.nodes.SourceFileAttr;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.AccessInfo.AFType;
@@ -33,27 +39,30 @@ import jadx.core.dex.nodes.parser.AnnotationsParser;
 import jadx.core.dex.nodes.parser.FieldInitAttr;
 import jadx.core.dex.nodes.parser.SignatureParser;
 import jadx.core.dex.nodes.parser.StaticValuesParser;
+import jadx.core.utils.SmaliUtils;
 import jadx.core.utils.exceptions.DecodeException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
-import static jadx.core.dex.nodes.ProcessState.UNLOADED;
+import static jadx.core.dex.nodes.ProcessState.LOADED;
+import static jadx.core.dex.nodes.ProcessState.NOT_LOADED;
 
-public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
+public class ClassNode extends NotificationAttrNode implements ILoadable, ICodeNode {
 	private static final Logger LOG = LoggerFactory.getLogger(ClassNode.class);
 
 	private final DexNode dex;
+	private final int clsDefOffset;
 	private final ClassInfo clsInfo;
 	private AccessInfo accessFlags;
 	private ArgType superClass;
 	private List<ArgType> interfaces;
-	private Map<ArgType, List<ArgType>> genericMap;
+	private List<GenericTypeParameter> generics = Collections.emptyList();
 
 	private final List<MethodNode> methods;
 	private final List<FieldNode> fields;
-	private List<ClassNode> innerClasses = new ArrayList<>();
+	private List<ClassNode> innerClasses = Collections.emptyList();
 
-	// store decompiled code
-	private CodeWriter code;
+	private List<ClassNode> inlinedClasses = Collections.emptyList();
+
 	// store smali
 	private String smali;
 
@@ -63,7 +72,7 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 	// store parent for inner classes or 'this' otherwise
 	private ClassNode parentClass;
 
-	private ProcessState state = ProcessState.NOT_LOADED;
+	private volatile ProcessState state = ProcessState.NOT_LOADED;
 	private List<ClassNode> dependencies = Collections.emptyList();
 
 	// cache maps
@@ -71,10 +80,15 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 
 	public ClassNode(DexNode dex, ClassDef cls) {
 		this.dex = dex;
+		this.clsDefOffset = cls.getOffset();
 		this.clsInfo = ClassInfo.fromDex(dex, cls.getTypeIndex());
 		try {
 			if (cls.getSupertypeIndex() == DexNode.NO_INDEX) {
 				this.superClass = null;
+				// only java.lang.Object don't have super class
+				if (!clsInfo.getType().getObject().equals(Consts.CLASS_OBJECT)) {
+					throw new JadxRuntimeException("No super class in " + clsInfo.getType());
+				}
 			} else {
 				this.superClass = dex.getType(cls.getSupertypeIndex());
 			}
@@ -110,9 +124,10 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 			}
 
 			loadAnnotations(cls);
-
+			initAccessFlags(cls);
 			parseClassSignature();
 			setFieldsTypesFromSignature();
+			methods.forEach(MethodNode::initMethodTypes);
 
 			int sfIdx = cls.getSourceFileIndex();
 			if (sfIdx != DexNode.NO_INDEX) {
@@ -120,24 +135,30 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 				addSourceFilenameAttr(fileName);
 			}
 
-			// restore original access flags from dalvik annotation if present
-			int accFlagsValue;
-			Annotation a = getAnnotation(Consts.DALVIK_INNER_CLASS);
-			if (a != null) {
-				accFlagsValue = (Integer) a.getValues().get("accessFlags");
-			} else {
-				accFlagsValue = cls.getAccessFlags();
-			}
-			this.accessFlags = new AccessInfo(accFlagsValue, AFType.CLASS);
 			buildCache();
 		} catch (Exception e) {
 			throw new JadxRuntimeException("Error decode class: " + clsInfo, e);
 		}
 	}
 
+	/**
+	 * Restore original access flags from Dalvik annotation if present
+	 */
+	private void initAccessFlags(ClassDef cls) {
+		int accFlagsValue;
+		Annotation a = getAnnotation(Consts.DALVIK_INNER_CLASS);
+		if (a != null) {
+			accFlagsValue = (Integer) a.getValues().get("accessFlags");
+		} else {
+			accFlagsValue = cls.getAccessFlags();
+		}
+		this.accessFlags = new AccessInfo(accFlagsValue, AFType.CLASS);
+	}
+
 	// empty synthetic class
 	public ClassNode(DexNode dex, String name, int accessFlags) {
 		this.dex = dex;
+		this.clsDefOffset = 0;
 		this.clsInfo = ClassInfo.fromName(dex.root(), name);
 		this.interfaces = new ArrayList<>();
 		this.methods = new ArrayList<>();
@@ -162,6 +183,7 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 	private void loadStaticValues(ClassDef cls, List<FieldNode> staticFields) throws DecodeException {
 		for (FieldNode f : staticFields) {
 			if (f.getAccessFlags().isFinal()) {
+				// incorrect initialization will be removed if assign found in constructor
 				f.addAttr(FieldInitAttr.NULL_VALUE);
 			}
 		}
@@ -177,6 +199,10 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 		root().getConstValues().processConstFields(this, staticFields);
 	}
 
+	/**
+	 * Class signature format:
+	 * https://docs.oracle.com/javase/specs/jvms/se8/html/jvms-4.html#jvms-4.7.9.1
+	 */
 	private void parseClassSignature() {
 		SignatureParser sp = SignatureParser.fromNode(this);
 		if (sp == null) {
@@ -184,9 +210,9 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 		}
 		try {
 			// parse class generic map
-			genericMap = sp.consumeGenericMap();
+			generics = sp.consumeGenericTypeParameters();
 			// parse super class signature
-			superClass = sp.consumeType();
+			superClass = validateSuperCls(sp.consumeType(), superClass);
 			// parse interfaces signatures
 			for (int i = 0; i < interfaces.size(); i++) {
 				ArgType type = sp.consumeType();
@@ -199,6 +225,18 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 		} catch (Exception e) {
 			LOG.error("Class signature parse error: {}", this, e);
 		}
+	}
+
+	private ArgType validateSuperCls(ArgType candidateType, ArgType currentType) {
+		if (!candidateType.isObject()) {
+			this.addComment("Incorrect class signature, super class is not object: " + SignatureParser.getSignature(this));
+			return currentType;
+		}
+		if (Objects.equals(candidateType.getObject(), this.getClassInfo().getType().getObject())) {
+			this.addComment("Incorrect class signature, super class is equals to this class: " + SignatureParser.getSignature(this));
+			return currentType;
+		}
+		return candidateType;
 	}
 
 	private void setFieldsTypesFromSignature() {
@@ -238,12 +276,48 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 					&& fileName.endsWith('$' + name)) {
 				return;
 			}
-			ClassInfo parentClass = clsInfo.getTopParentClass();
-			if (parentClass != null && fileName.equals(parentClass.getShortName())) {
+			ClassInfo parentCls = clsInfo.getTopParentClass();
+			if (parentCls != null && fileName.equals(parentCls.getShortName())) {
 				return;
 			}
 		}
 		this.addAttr(new SourceFileAttr(fileName));
+	}
+
+	public void ensureProcessed() {
+		ClassNode topClass = getTopParentClass();
+		ProcessState topState = topClass.getState();
+		if (!topState.isProcessed()) {
+			throw new JadxRuntimeException("Expected class to be processed at this point,"
+					+ " class: " + topClass + ", state: " + topState);
+		}
+	}
+
+	public ICodeInfo decompile() {
+		return decompile(true);
+	}
+
+	public ICodeInfo getCode() {
+		return decompile(true);
+	}
+
+	public ICodeInfo reloadCode() {
+		return decompile(false);
+	}
+
+	private synchronized ICodeInfo decompile(boolean searchInCache) {
+		ICodeCache codeCache = root().getCodeCache();
+		ClassNode topParentClass = getTopParentClass();
+		String clsRawName = topParentClass.getRawName();
+		if (searchInCache) {
+			ICodeInfo code = codeCache.get(clsRawName);
+			if (code != null && code != ICodeInfo.EMPTY) {
+				return code;
+			}
+		}
+		ICodeInfo codeInfo = ProcessClass.generateCode(topParentClass);
+		codeCache.add(clsRawName, codeInfo);
+		return codeInfo;
 	}
 
 	@Override
@@ -258,17 +332,16 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 		for (ClassNode innerCls : getInnerClasses()) {
 			innerCls.load();
 		}
+		setState(LOADED);
 	}
 
 	@Override
 	public void unload() {
-		for (MethodNode mth : getMethods()) {
-			mth.unload();
-		}
-		for (ClassNode innerCls : getInnerClasses()) {
-			innerCls.unload();
-		}
-		setState(UNLOADED);
+		methods.forEach(MethodNode::unload);
+		innerClasses.forEach(ClassNode::unload);
+		fields.forEach(FieldNode::unloadAttributes);
+		unloadAttributes();
+		setState(NOT_LOADED);
 	}
 
 	private void buildCache() {
@@ -287,8 +360,8 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 		return interfaces;
 	}
 
-	public Map<ArgType, List<ArgType>> getGenericMap() {
-		return genericMap;
+	public List<GenericTypeParameter> getGenericTypeParameters() {
+		return generics;
 	}
 
 	public List<MethodNode> getMethods() {
@@ -393,13 +466,52 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 		return parent == this ? this : parent.getTopParentClass();
 	}
 
+	public boolean hasNotGeneratedParent() {
+		if (contains(AFlag.DONT_GENERATE)) {
+			return true;
+		}
+		ClassNode parent = getParentClass();
+		if (parent == this) {
+			return false;
+		}
+		return parent.hasNotGeneratedParent();
+	}
+
 	public List<ClassNode> getInnerClasses() {
 		return innerClasses;
 	}
 
+	/**
+	 * Get all inner and inlined classes recursively
+	 *
+	 * @param resultClassesSet all identified inner and inlined classes are added to this set
+	 */
+	public void getInnerAndInlinedClassesRecursive(Set<ClassNode> resultClassesSet) {
+		for (ClassNode innerCls : innerClasses) {
+			if (resultClassesSet.add(innerCls)) {
+				innerCls.getInnerAndInlinedClassesRecursive(resultClassesSet);
+			}
+		}
+		for (ClassNode inlinedCls : inlinedClasses) {
+			if (resultClassesSet.add(inlinedCls)) {
+				inlinedCls.getInnerAndInlinedClassesRecursive(resultClassesSet);
+			}
+		}
+	}
+
 	public void addInnerClass(ClassNode cls) {
+		if (innerClasses.isEmpty()) {
+			innerClasses = new ArrayList<>(5);
+		}
 		innerClasses.add(cls);
 		cls.parentClass = this;
+	}
+
+	public void addInlinedClass(ClassNode cls) {
+		if (inlinedClasses.isEmpty()) {
+			inlinedClasses = new ArrayList<>(5);
+		}
+		inlinedClasses.add(cls);
 	}
 
 	public boolean isEnum() {
@@ -475,16 +587,20 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 		return clsInfo.getAliasPkg();
 	}
 
-	public void setCode(CodeWriter code) {
-		this.code = code;
-	}
-
-	public CodeWriter getCode() {
-		return code;
-	}
-
-	public void setSmali(String smali) {
-		this.smali = smali;
+	public String getSmali() {
+		if (smali == null) {
+			StringWriter stringWriter = new StringWriter(4096);
+			getSmali(this, stringWriter);
+			stringWriter.append(System.lineSeparator());
+			Set<ClassNode> allInlinedClasses = new LinkedHashSet<>();
+			getInnerAndInlinedClassesRecursive(allInlinedClasses);
+			for (ClassNode innerClass : allInlinedClasses) {
+				getSmali(innerClass, stringWriter);
+				stringWriter.append(System.lineSeparator());
+			}
+			smali = stringWriter.toString();
+		}
+		return smali;
 	}
 
 	public String getJimple() {
@@ -495,8 +611,10 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 		this.jimple = jimple;
 	}
 
-	public String getSmali() {
-		return smali;
+	protected static boolean getSmali(ClassNode classNode, StringWriter stringWriter) {
+		stringWriter.append(String.format("###### Class %s (%s)", classNode.getFullName(), classNode.getRawName()));
+		stringWriter.append(System.lineSeparator());
+		return SmaliUtils.getSmaliCode(classNode.dex, classNode.clsDefOffset, stringWriter);
 	}
 
 	public ProcessState getState() {
@@ -536,4 +654,5 @@ public class ClassNode extends LineAttrNode implements ILoadable, ICodeNode {
 	public String toString() {
 		return clsInfo.getFullName();
 	}
+
 }

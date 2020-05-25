@@ -3,6 +3,11 @@ package jadx.core.utils;
 import jadx.api.JadxArgs;
 
 public class StringUtils {
+	private static final StringUtils DEFAULT_INSTANCE = new StringUtils(new JadxArgs());
+
+	public static StringUtils getInstance() {
+		return DEFAULT_INSTANCE;
+	}
 
 	private final boolean escapeUnicode;
 
@@ -209,6 +214,10 @@ public class StringUtils {
 
 	public static boolean isEmpty(String str) {
 		return str == null || str.isEmpty();
+	}
+
+	public static boolean notBlank(String str) {
+		return notEmpty(str) && !str.trim().isEmpty();
 	}
 
 	public static int countMatches(String str, String subStr) {

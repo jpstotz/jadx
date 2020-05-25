@@ -2,6 +2,8 @@ package jadx.core.dex.visitors;
 
 import java.util.ArrayList;
 
+import org.jetbrains.annotations.Nullable;
+
 import jadx.core.codegen.TypeGen;
 import jadx.core.dex.info.MethodInfo;
 import jadx.core.dex.instructions.InsnType;
@@ -22,7 +24,7 @@ import jadx.core.utils.InsnRemover;
 @JadxVisitor(
 		name = "ConstructorVisitor",
 		desc = "Replace invoke with constructor call",
-		runAfter = SSATransform.class,
+		runAfter = { SSATransform.class, MoveInlineVisitor.class },
 		runBefore = TypeInferenceVisitor.class
 )
 public class ConstructorVisitor extends AbstractVisitor {
@@ -60,6 +62,7 @@ public class ConstructorVisitor extends AbstractVisitor {
 		}
 		InsnNode instArgAssignInsn = ((RegisterArg) inv.getArg(0)).getAssignInsn();
 		ConstructorInsn co = new ConstructorInsn(mth, inv);
+		co.rebindArgs();
 		boolean remove = false;
 		if (co.isSuper() && (co.getArgsCount() == 0 || parentClass.isEnum())) {
 			remove = true;
@@ -97,14 +100,19 @@ public class ConstructorVisitor extends AbstractVisitor {
 		}
 		ConstructorInsn replace = processConstructor(mth, co);
 		if (replace != null) {
+			remover.addAndUnbind(co);
 			co = replace;
 		}
-		BlockUtils.replaceInsn(block, indexInBlock, co);
+		BlockUtils.replaceInsn(mth, block, indexInBlock, co);
 	}
 
 	/**
-	 * Replace call of synthetic constructor
+	 * Replace call of synthetic constructor with all 'null' args
+	 * to a non-synthetic or default constructor if possible.
+	 *
+	 * @return insn for replacement or null if replace not needed or not possible.
 	 */
+	@Nullable
 	private static ConstructorInsn processConstructor(MethodNode mth, ConstructorInsn co) {
 		MethodNode callMth = mth.dex().resolveMethod(co.getCallMth());
 		if (callMth == null
@@ -116,15 +124,18 @@ public class ConstructorVisitor extends AbstractVisitor {
 		if (classNode == null) {
 			return null;
 		}
-		RegisterArg instanceArg = co.getInstanceArg();
+		RegisterArg instanceArg = co.getResult();
+		if (instanceArg == null) {
+			return null;
+		}
 		boolean passThis = instanceArg.isThis();
 		String ctrId = "<init>(" + (passThis ? TypeGen.signature(instanceArg.getInitType()) : "") + ")V";
 		MethodNode defCtr = classNode.searchMethodByShortId(ctrId);
-		if (defCtr == null) {
+		if (defCtr == null || defCtr.equals(callMth) || defCtr.getAccessFlags().isSynthetic()) {
 			return null;
 		}
-		ConstructorInsn newInsn = new ConstructorInsn(defCtr.getMethodInfo(), co.getCallType(), instanceArg);
-		newInsn.setResult(co.getResult());
+		ConstructorInsn newInsn = new ConstructorInsn(defCtr.getMethodInfo(), co.getCallType());
+		newInsn.setResult(co.getResult().duplicate());
 		return newInsn;
 	}
 

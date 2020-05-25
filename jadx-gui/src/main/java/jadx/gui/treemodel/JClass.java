@@ -3,25 +3,27 @@ package jadx.gui.treemodel;
 import javax.swing.*;
 
 import org.fife.ui.rsyntaxtextarea.SyntaxConstants;
+import org.jetbrains.annotations.Nullable;
 
+import jadx.api.ICodeInfo;
 import jadx.api.JavaClass;
 import jadx.api.JavaField;
 import jadx.api.JavaMethod;
 import jadx.api.JavaNode;
 import jadx.core.dex.info.AccessInfo;
 import jadx.gui.utils.NLS;
-import jadx.gui.utils.Utils;
+import jadx.gui.utils.UiUtils;
 
 public class JClass extends JLoadableNode {
 	private static final long serialVersionUID = -1239986875244097177L;
 
-	private static final ImageIcon ICON_CLASS = Utils.openIcon("class_obj");
-	private static final ImageIcon ICON_CLASS_DEFAULT = Utils.openIcon("class_default_obj");
-	private static final ImageIcon ICON_CLASS_PRIVATE = Utils.openIcon("innerclass_private_obj");
-	private static final ImageIcon ICON_CLASS_PROTECTED = Utils.openIcon("innerclass_protected_obj");
-	private static final ImageIcon ICON_INTERFACE = Utils.openIcon("int_obj");
-	private static final ImageIcon ICON_ENUM = Utils.openIcon("enum_obj");
-	private static final ImageIcon ICON_ANNOTATION = Utils.openIcon("annotation_obj");
+	private static final ImageIcon ICON_CLASS = UiUtils.openIcon("class_obj");
+	private static final ImageIcon ICON_CLASS_DEFAULT = UiUtils.openIcon("class_default_obj");
+	private static final ImageIcon ICON_CLASS_PRIVATE = UiUtils.openIcon("innerclass_private_obj");
+	private static final ImageIcon ICON_CLASS_PROTECTED = UiUtils.openIcon("innerclass_protected_obj");
+	private static final ImageIcon ICON_INTERFACE = UiUtils.openIcon("int_obj");
+	private static final ImageIcon ICON_ENUM = UiUtils.openIcon("enum_obj");
+	private static final ImageIcon ICON_ANNOTATION = UiUtils.openIcon("annotation_obj");
 
 	private final transient JavaClass cls;
 	private final transient JClass jParent;
@@ -74,6 +76,12 @@ public class JClass extends JLoadableNode {
 				add(new JMethod(m, this));
 			}
 		}
+	}
+
+	@Override
+	public @Nullable ICodeInfo getCodeInfo() {
+		load();
+		return cls.getClassNode().getCode();
 	}
 
 	@Override
@@ -150,11 +158,6 @@ public class JClass extends JLoadableNode {
 	@Override
 	public int getLine() {
 		return cls.getDecompiledLine();
-	}
-
-	@Override
-	public Integer getSourceLine(int line) {
-		return cls.getSourceLine(line);
 	}
 
 	@Override

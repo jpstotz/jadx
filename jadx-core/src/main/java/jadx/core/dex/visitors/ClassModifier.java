@@ -1,5 +1,6 @@
 package jadx.core.dex.visitors;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -9,6 +10,7 @@ import jadx.core.Consts;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.FieldReplaceAttr;
+import jadx.core.dex.attributes.nodes.SkipMethodArgsAttr;
 import jadx.core.dex.info.AccessInfo;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.FieldInfo;
@@ -102,7 +104,7 @@ public class ClassModifier extends AbstractVisitor {
 		if (mth.isNoCode() || !mth.getAccessFlags().isConstructor()) {
 			return false;
 		}
-		List<RegisterArg> args = mth.getArguments(false);
+		List<RegisterArg> args = mth.getArgRegs();
 		if (args.isEmpty() || mth.contains(AFlag.SKIP_FIRST_ARG)) {
 			return false;
 		}
@@ -130,8 +132,8 @@ public class ClassModifier extends AbstractVisitor {
 		if (arg.getSVar().getUseCount() != 0) {
 			InsnNode iget = new IndexInsnNode(InsnType.IGET, fieldInfo, 1);
 			iget.addArg(insn.getArg(1));
-			for (InsnArg insnArg : arg.getSVar().getUseList()) {
-				insnArg.wrapInstruction(iget);
+			for (InsnArg insnArg : new ArrayList<>(arg.getSVar().getUseList())) {
+				insnArg.wrapInstruction(mth, iget);
 			}
 		}
 		return true;
@@ -156,7 +158,7 @@ public class ClassModifier extends AbstractVisitor {
 		}
 		// remove synthetic constructor for inner classes
 		if (af.isConstructor() && mth.getBasicBlocks().size() == 2) {
-			List<RegisterArg> args = mth.getArguments(false);
+			List<RegisterArg> args = mth.getArgRegs();
 			if (isRemovedClassInArgs(cls, args)) {
 				modifySyntheticMethod(cls, mth, args);
 			}
@@ -197,13 +199,15 @@ public class ClassModifier extends AbstractVisitor {
 				// remove first arg for non-static class (references to outer class)
 				RegisterArg firstArg = args.get(0);
 				if (firstArg.getType().equals(cls.getParentClass().getClassInfo().getType())) {
-					firstArg.add(AFlag.SKIP_ARG);
+					SkipMethodArgsAttr.skipArg(mth, 0);
 				}
 				// remove unused args
-				for (RegisterArg arg : args) {
+				int argsCount = args.size();
+				for (int i = 0; i < argsCount; i++) {
+					RegisterArg arg = args.get(i);
 					SSAVar sVar = arg.getSVar();
 					if (sVar != null && sVar.getUseCount() == 0) {
-						arg.add(AFlag.SKIP_ARG);
+						SkipMethodArgsAttr.skipArg(mth, i);
 					}
 				}
 				mth.add(AFlag.DONT_GENERATE);
@@ -305,7 +309,7 @@ public class ClassModifier extends AbstractVisitor {
 		// remove public empty constructors (static or default)
 		if (af.isConstructor()
 				&& (af.isPublic() || af.isStatic())
-				&& mth.getArguments(false).isEmpty()) {
+				&& mth.getArgRegs().isEmpty()) {
 			List<BlockNode> bb = mth.getBasicBlocks();
 			if (bb == null || bb.isEmpty() || BlockUtils.isAllBlocksEmpty(bb)) {
 				if (af.isStatic() && mth.getMethodInfo().isClassInit()) {

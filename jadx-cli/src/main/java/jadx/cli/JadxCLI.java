@@ -5,7 +5,9 @@ import org.slf4j.LoggerFactory;
 
 import jadx.api.JadxArgs;
 import jadx.api.JadxDecompiler;
+import jadx.api.impl.NoOpCodeCache;
 import jadx.core.utils.exceptions.JadxArgsValidateException;
+import jadx.core.utils.files.FileUtils;
 
 public class JadxCLI {
 	private static final Logger LOG = LoggerFactory.getLogger(JadxCLI.class);
@@ -21,12 +23,14 @@ public class JadxCLI {
 			LOG.error("jadx error: {}", e.getMessage(), e);
 			result = 1;
 		} finally {
+			FileUtils.deleteTempRootDir();
 			System.exit(result);
 		}
 	}
 
 	static int processAndSave(JadxCLIArgs inputArgs) {
 		JadxArgs args = inputArgs.toJadxArgs();
+		args.setCodeCache(new NoOpCodeCache());
 		JadxDecompiler jadx = new JadxDecompiler(args);
 		try {
 			jadx.load();
@@ -38,10 +42,10 @@ public class JadxCLI {
 		int errorsCount = jadx.getErrorsCount();
 		if (errorsCount != 0) {
 			jadx.printErrorsReport();
-			LOG.error("finished with errors");
+			LOG.error("finished with errors, count: {}", errorsCount);
 		} else {
 			LOG.info("done");
 		}
-		return errorsCount;
+		return 0;
 	}
 }

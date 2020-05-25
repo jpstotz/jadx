@@ -14,18 +14,19 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import org.jetbrains.annotations.Nullable;
-import org.jf.smali.Smali;
-import org.jf.smali.SmaliOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.android.dex.Dex;
+import com.android.dex.DexException;
 
 import jadx.core.utils.AsmUtils;
+import jadx.core.utils.SmaliUtils;
 import jadx.core.utils.exceptions.DecodeException;
 import jadx.core.utils.exceptions.JadxException;
 import jadx.core.utils.exceptions.JadxRuntimeException;
 
+import static jadx.core.codegen.CodeWriter.NL;
 import static jadx.core.utils.files.FileUtils.isApkFile;
 import static jadx.core.utils.files.FileUtils.isZipDexFile;
 
@@ -35,9 +36,9 @@ public class InputFile {
 	private final File file;
 	private final List<DexFile> dexFiles = new ArrayList<>();
 
-	public static void addFilesFrom(File file, List<InputFile> list, boolean... skipSources) throws IOException, DecodeException {
+	public static void addFilesFrom(File file, List<InputFile> list, boolean skipSources) throws IOException, DecodeException {
 		InputFile inputFile = new InputFile(file);
-		inputFile.searchDexFiles(skipSources.length == 0 ? false : skipSources[0]);
+		inputFile.searchDexFiles(skipSources);
 		list.add(inputFile);
 	}
 
@@ -52,20 +53,18 @@ public class InputFile {
 		String fileName = file.getName();
 
 		if (fileName.endsWith(".dex")) {
-			addDexFile(fileName, new Dex(file), file.toPath());
+			addDexFile(fileName, file.toPath());
 			return;
 		}
 		if (fileName.endsWith(".smali")) {
 			Path output = FileUtils.createTempFile(".dex");
-			SmaliOptions options = new SmaliOptions();
-			options.outputDexFile = output.toAbsolutePath().toString();
-			Smali.assemble(options, file.getAbsolutePath());
-			addDexFile("", new Dex(output.toFile()), output);
+			SmaliUtils.assembleDex(output.toAbsolutePath().toString(), file.getAbsolutePath());
+			addDexFile(fileName, output);
 			return;
 		}
 		if (fileName.endsWith(".class")) {
 			for (Path path : loadFromClassFile(file)) {
-				addDexFile(path);
+				addDexFile(fileName, path);
 			}
 			return;
 		}
@@ -80,7 +79,7 @@ public class InputFile {
 			}
 			if (fileName.endsWith(".jar")) {
 				for (Path path : loadFromJar(file.toPath())) {
-					addDexFile(path);
+					addDexFile(fileName, path);
 				}
 				return;
 			}
@@ -94,18 +93,6 @@ public class InputFile {
 			return;
 		}
 		LOG.warn("No dex files found in {}", file);
-	}
-
-	private void addDexFile(Path path) throws IOException {
-		addDexFile("", path);
-	}
-
-	private void addDexFile(String fileName, Path path) throws IOException {
-		addDexFile(fileName, new Dex(Files.readAllBytes(path)), path);
-	}
-
-	private void addDexFile(String fileName, Dex dexBuf, Path path) {
-		dexFiles.add(new DexFile(this, fileName, dexBuf, path));
 	}
 
 	private boolean loadFromZip(String ext) throws IOException, DecodeException {
@@ -127,9 +114,8 @@ public class InputFile {
 							|| entryName.endsWith(instantRunDexSuffix)) {
 						switch (ext) {
 							case ".dex":
-								Path path = makeDexBuf(entryName, inputStream);
-								if (path != null) {
-									addDexFile(entryName, path);
+								Path path = copyToTmpDex(entryName, inputStream);
+								if (addDexFile(entryName, path)) {
 									index++;
 								}
 								break;
@@ -151,10 +137,10 @@ public class InputFile {
 						Files.copy(inputStream, jarFile, StandardCopyOption.REPLACE_EXISTING);
 						InputFile tempFile = new InputFile(jarFile.toFile());
 						tempFile.loadFromZip(ext);
-						List<DexFile> dexFiles = tempFile.getDexFiles();
-						if (!dexFiles.isEmpty()) {
-							index += dexFiles.size();
-							this.dexFiles.addAll(dexFiles);
+						List<DexFile> files = tempFile.getDexFiles();
+						if (!files.isEmpty()) {
+							index += files.size();
+							this.dexFiles.addAll(files);
 						}
 					}
 				}
@@ -163,8 +149,32 @@ public class InputFile {
 		return index > 0;
 	}
 
+	private boolean addDexFile(String entryName, @Nullable Path filePath) {
+		if (filePath == null) {
+			return false;
+		}
+		Dex dexBuf = loadDexBufFromPath(filePath, entryName);
+		if (dexBuf == null) {
+			return false;
+		}
+		dexFiles.add(new DexFile(this, entryName, dexBuf, filePath));
+		return true;
+	}
+
 	@Nullable
-	private Path makeDexBuf(String entryName, InputStream inputStream) {
+	private Dex loadDexBufFromPath(Path path, String entryName) {
+		try {
+			return new Dex(Files.readAllBytes(path));
+		} catch (DexException e) {
+			LOG.error("Failed to load dex file: {}, error: {}", entryName, e.getMessage());
+		} catch (Exception e) {
+			LOG.error("Failed to load dex file: {}, error: {}", entryName, e.getMessage(), e);
+		}
+		return null;
+	}
+
+	@Nullable
+	private Path copyToTmpDex(String entryName, InputStream inputStream) {
 		try {
 			Path path = FileUtils.createTempFile(".dex");
 			Files.copy(inputStream, path, StandardCopyOption.REPLACE_EXISTING);
@@ -183,9 +193,12 @@ public class InputFile {
 			if (pathList.isEmpty()) {
 				throw new JadxException("Empty dx output");
 			}
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("result dex files: {}", pathList);
+			}
 			return pathList;
 		} catch (Exception e) {
-			throw new DecodeException("java class to dex conversion error:\n " + e.getMessage(), e);
+			throw new DecodeException("java class to dex conversion error:" + NL + "  " + e.getMessage(), e);
 		} finally {
 			if (j2d.isError()) {
 				LOG.warn("dx message: {}", j2d.getDxErrors());

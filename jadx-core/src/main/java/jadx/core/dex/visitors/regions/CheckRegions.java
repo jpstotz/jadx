@@ -61,7 +61,7 @@ public class CheckRegions extends AbstractVisitor {
 						&& !block.contains(AFlag.ADDED_TO_REGION)
 						&& !block.contains(AFlag.DONT_GENERATE)
 						&& !block.contains(AFlag.REMOVE)) {
-					String blockCode = getBlockInsnStr(mth, block);
+					String blockCode = getBlockInsnStr(mth, block).replace("*/", "*\\/");
 					mth.addWarn("Code restructure failed: missing block: " + block + ", code lost:" + blockCode);
 				}
 			}
@@ -84,8 +84,8 @@ public class CheckRegions extends AbstractVisitor {
 
 	private static String getBlockInsnStr(MethodNode mth, IBlock block) {
 		CodeWriter code = new CodeWriter();
+		code.incIndent();
 		code.newLine();
-		code.setIndent(3);
 		MethodGen mg = MethodGen.getFallbackMethodGen(mth);
 		InsnGen ig = new InsnGen(mg, true);
 		for (InsnNode insn : block.getInstructions()) {
@@ -95,7 +95,7 @@ public class CheckRegions extends AbstractVisitor {
 				// ignore
 			}
 		}
-		code.newLine().addIndent();
+		code.newLine();
 		code.finish();
 		return code.toString();
 	}

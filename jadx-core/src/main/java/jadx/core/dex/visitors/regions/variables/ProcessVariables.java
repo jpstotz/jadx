@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.attributes.AType;
 import jadx.core.dex.attributes.nodes.DeclareVariablesAttr;
+import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.args.ArgType;
 import jadx.core.dex.instructions.args.CodeVar;
 import jadx.core.dex.instructions.args.RegisterArg;
@@ -25,7 +26,10 @@ import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
 import jadx.core.dex.regions.loops.LoopRegion;
 import jadx.core.dex.visitors.AbstractVisitor;
+import jadx.core.dex.visitors.regions.AbstractRegionVisitor;
 import jadx.core.dex.visitors.regions.DepthRegionTraversal;
+import jadx.core.dex.visitors.typeinference.TypeCompare;
+import jadx.core.dex.visitors.typeinference.TypeCompareEnum;
 import jadx.core.utils.RegionUtils;
 import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxException;
@@ -38,6 +42,7 @@ public class ProcessVariables extends AbstractVisitor {
 		if (mth.isNoCode() || mth.getSVars().isEmpty()) {
 			return;
 		}
+		removeUnusedResults(mth);
 
 		List<CodeVar> codeVars = collectCodeVars(mth);
 		if (codeVars.isEmpty()) {
@@ -61,22 +66,45 @@ public class ProcessVariables extends AbstractVisitor {
 		}
 	}
 
+	private static void removeUnusedResults(MethodNode mth) {
+		DepthRegionTraversal.traverse(mth, new AbstractRegionVisitor() {
+			@Override
+			public void processBlock(MethodNode mth, IBlock container) {
+				for (InsnNode insn : container.getInstructions()) {
+					RegisterArg resultArg = insn.getResult();
+					if (resultArg != null) {
+						SSAVar ssaVar = resultArg.getSVar();
+						if (ssaVar.getUseList().isEmpty() && insn.canRemoveResult()) {
+							insn.setResult(null);
+							mth.removeSVar(ssaVar);
+						}
+					}
+				}
+			}
+		});
+	}
+
 	private void checkCodeVars(MethodNode mth, List<CodeVar> codeVars) {
 		int unknownTypesCount = 0;
 		for (CodeVar codeVar : codeVars) {
-			codeVar.getSsaVars().stream()
-					.filter(ssaVar -> ssaVar.contains(AFlag.IMMUTABLE_TYPE))
-					.forEach(ssaVar -> {
-						ArgType ssaType = ssaVar.getAssign().getInitType();
-						if (ssaType.isTypeKnown() && !ssaType.equals(codeVar.getType())) {
-							mth.addWarn("Incorrect type for immutable var: ssa=" + ssaType
-									+ ", code=" + codeVar.getType()
-									+ ", for " + ssaVar.getDetailedVarInfo(mth));
-						}
-					});
-			if (codeVar.getType() == null) {
+			ArgType codeVarType = codeVar.getType();
+			if (codeVarType == null) {
 				codeVar.setType(ArgType.UNKNOWN);
 				unknownTypesCount++;
+			} else {
+				codeVar.getSsaVars()
+						.forEach(ssaVar -> {
+							ArgType ssaType = ssaVar.getImmutableType();
+							if (ssaType != null && ssaType.isTypeKnown()) {
+								TypeCompare comparator = mth.root().getTypeUpdate().getTypeCompare();
+								TypeCompareEnum result = comparator.compareTypes(ssaType, codeVarType);
+								if (result == TypeCompareEnum.CONFLICT || result.isNarrow()) {
+									mth.addWarn("Incorrect type for immutable var: ssa=" + ssaType
+											+ ", code=" + codeVarType
+											+ ", for " + ssaVar.getDetailedVarInfo(mth));
+								}
+							}
+						});
 			}
 		}
 		if (unknownTypesCount != 0) {
@@ -220,7 +248,9 @@ public class ProcessVariables extends AbstractVisitor {
 	private static boolean checkDeclareAtAssign(SSAVar var) {
 		RegisterArg arg = var.getAssign();
 		InsnNode parentInsn = arg.getParentInsn();
-		if (parentInsn == null) {
+		if (parentInsn == null
+				|| parentInsn.contains(AFlag.WRAPPED)
+				|| parentInsn.getType() == InsnType.PHI) {
 			return false;
 		}
 		if (!arg.equals(parentInsn.getResult())) {

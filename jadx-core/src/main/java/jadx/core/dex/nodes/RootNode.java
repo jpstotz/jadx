@@ -1,6 +1,7 @@
 package jadx.core.dex.nodes;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.jetbrains.annotations.NotNull;
@@ -8,16 +9,22 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import jadx.api.ICodeCache;
 import jadx.api.JadxArgs;
 import jadx.api.ResourceFile;
 import jadx.api.ResourceType;
 import jadx.api.ResourcesLoader;
+import jadx.core.Jadx;
 import jadx.core.clsp.ClspGraph;
 import jadx.core.dex.info.ClassInfo;
 import jadx.core.dex.info.ConstStorage;
 import jadx.core.dex.info.FieldInfo;
 import jadx.core.dex.info.InfoStorage;
 import jadx.core.dex.info.MethodInfo;
+import jadx.core.dex.instructions.args.ArgType;
+import jadx.core.dex.nodes.utils.MethodUtils;
+import jadx.core.dex.nodes.utils.TypeUtils;
+import jadx.core.dex.visitors.IDexTreeVisitor;
 import jadx.core.dex.visitors.typeinference.TypeUpdate;
 import jadx.core.utils.CacheStorage;
 import jadx.core.utils.ErrorsCounter;
@@ -32,13 +39,19 @@ import jadx.core.xmlgen.ResourceStorage;
 public class RootNode {
 	private static final Logger LOG = LoggerFactory.getLogger(RootNode.class);
 
-	private final ErrorsCounter errorsCounter = new ErrorsCounter();
 	private final JadxArgs args;
+	private final List<IDexTreeVisitor> passes;
+
+	private final ErrorsCounter errorsCounter = new ErrorsCounter();
 	private final StringUtils stringUtils;
 	private final ConstStorage constValues;
 	private final InfoStorage infoStorage = new InfoStorage();
 	private final CacheStorage cacheStorage = new CacheStorage();
 	private final TypeUpdate typeUpdate;
+	private final MethodUtils methodUtils;
+	private final TypeUtils typeUtils;
+
+	private final ICodeCache codeCache;
 
 	private ClspGraph clsp;
 	private List<DexNode> dexNodes;
@@ -49,9 +62,15 @@ public class RootNode {
 
 	public RootNode(JadxArgs args) {
 		this.args = args;
+		this.passes = Jadx.getPassesList(args);
 		this.stringUtils = new StringUtils(args);
 		this.constValues = new ConstStorage(args);
 		this.typeUpdate = new TypeUpdate(this);
+		this.codeCache = args.getCodeCache();
+		this.methodUtils = new MethodUtils(this);
+		this.typeUtils = new TypeUtils(this);
+
+		this.dexNodes = Collections.emptyList();
 	}
 
 	public void load(List<InputFile> inputFiles) {
@@ -106,7 +125,7 @@ public class RootNode {
 	public void initClassPath() {
 		try {
 			if (this.clsp == null) {
-				ClspGraph newClsp = new ClspGraph();
+				ClspGraph newClsp = new ClspGraph(this);
 				newClsp.load();
 
 				List<ClassNode> classes = new ArrayList<>();
@@ -156,9 +175,43 @@ public class RootNode {
 	}
 
 	@Nullable
+	public ClassNode resolveClass(ArgType clsType) {
+		if (!clsType.isTypeKnown() || clsType.isGenericType()) {
+			return null;
+		}
+		if (clsType.getWildcardBound() == ArgType.WildcardBound.UNBOUND) {
+			return null;
+		}
+		if (clsType.isGeneric()) {
+			clsType = ArgType.object(clsType.getObject());
+		}
+		for (DexNode dexNode : dexNodes) {
+			ClassNode cls = dexNode.resolveClass(clsType);
+			if (cls != null) {
+				return cls;
+			}
+		}
+		return null;
+	}
+
+	@Nullable
 	public ClassNode searchClassByName(String fullName) {
 		ClassInfo clsInfo = ClassInfo.fromName(this, fullName);
 		return resolveClass(clsInfo);
+	}
+
+	@Nullable
+	public ClassNode searchClassByFullAlias(String fullName) {
+		for (DexNode dexNode : dexNodes) {
+			for (ClassNode cls : dexNode.getClasses()) {
+				ClassInfo classInfo = cls.getClassInfo();
+				if (classInfo.getFullName().equals(fullName)
+						|| classInfo.getAliasFullName().equals(fullName)) {
+					return cls;
+				}
+			}
+		}
+		return null;
 	}
 
 	public List<ClassNode> searchClassByShortName(String shortName) {
@@ -179,6 +232,10 @@ public class RootNode {
 		if (cls == null) {
 			return null;
 		}
+		MethodNode methodNode = cls.searchMethod(mth);
+		if (methodNode != null) {
+			return methodNode;
+		}
 		return cls.dex().deepResolveMethod(cls, mth.makeSignature(false));
 	}
 
@@ -189,6 +246,20 @@ public class RootNode {
 			return null;
 		}
 		return cls.dex().deepResolveField(cls, field);
+	}
+
+	public List<IDexTreeVisitor> getPasses() {
+		return passes;
+	}
+
+	public void initPasses() {
+		for (IDexTreeVisitor pass : passes) {
+			try {
+				pass.init(this);
+			} catch (Exception e) {
+				LOG.error("Visitor init failed: {}", pass.getClass().getSimpleName(), e);
+			}
+		}
 	}
 
 	public List<DexNode> getDexNodes() {
@@ -234,5 +305,17 @@ public class RootNode {
 
 	public TypeUpdate getTypeUpdate() {
 		return typeUpdate;
+	}
+
+	public ICodeCache getCodeCache() {
+		return codeCache;
+	}
+
+	public MethodUtils getMethodUtils() {
+		return methodUtils;
+	}
+
+	public TypeUtils getTypeUtils() {
+		return typeUtils;
 	}
 }

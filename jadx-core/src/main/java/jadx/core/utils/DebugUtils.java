@@ -1,11 +1,13 @@
 package jadx.core.utils;
 
 import java.io.File;
-import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.jetbrains.annotations.TestOnly;
 import org.slf4j.Logger;
@@ -14,13 +16,7 @@ import org.slf4j.LoggerFactory;
 import jadx.core.codegen.CodeWriter;
 import jadx.core.codegen.InsnGen;
 import jadx.core.codegen.MethodGen;
-import jadx.core.dex.attributes.AType;
-import jadx.core.dex.attributes.nodes.PhiListAttr;
-import jadx.core.dex.instructions.InsnType;
-import jadx.core.dex.instructions.PhiInsn;
-import jadx.core.dex.instructions.args.InsnArg;
-import jadx.core.dex.instructions.args.RegisterArg;
-import jadx.core.dex.instructions.args.SSAVar;
+import jadx.core.dex.attributes.IAttributeNode;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.IBlock;
 import jadx.core.dex.nodes.IContainer;
@@ -34,7 +30,8 @@ import jadx.core.dex.visitors.regions.DepthRegionTraversal;
 import jadx.core.dex.visitors.regions.TracedRegionVisitor;
 import jadx.core.utils.exceptions.CodegenException;
 import jadx.core.utils.exceptions.JadxException;
-import jadx.core.utils.exceptions.JadxRuntimeException;
+
+import static jadx.core.codegen.CodeWriter.NL;
 
 @Deprecated
 @TestOnly
@@ -45,12 +42,21 @@ public class DebugUtils {
 	}
 
 	public static void dump(MethodNode mth) {
-		dump(mth, "");
+		dump(mth, "dump");
 	}
 
 	public static void dumpRaw(MethodNode mth, String desc) {
 		File out = new File("test-graph-" + desc + "-tmp");
 		DotGraphVisitor.dumpRaw().save(out, mth);
+	}
+
+	public static IDexTreeVisitor dumpRawVisitor(String desc) {
+		return new AbstractVisitor() {
+			@Override
+			public void visit(MethodNode mth) throws JadxException {
+				dumpRaw(mth, desc);
+			}
+		};
 	}
 
 	public static void dump(MethodNode mth, String desc) {
@@ -86,136 +92,81 @@ public class DebugUtils {
 		printRegions(mth, false);
 	}
 
-	public static void printRegion(MethodNode mth, IRegion region, boolean printInsn) {
-		printRegion(mth, region, "", printInsn);
-	}
-
 	public static void printRegions(MethodNode mth, boolean printInsns) {
-		LOG.debug("|{}", mth);
-		printRegion(mth, mth.getRegion(), "|  ", printInsns);
+		printRegion(mth, mth.getRegion(), printInsns);
 	}
 
-	private static void printRegion(MethodNode mth, IRegion region, String indent, boolean printInsns) {
-		LOG.debug("{}{} {}", indent, region, region.getAttributesString());
+	public static void printRegion(MethodNode mth, IRegion region, boolean printInsns) {
+		CodeWriter cw = new CodeWriter();
+		cw.startLine('|').add(mth.toString());
+		printRegion(mth, region, cw, "|  ", printInsns);
+		LOG.debug("{}{}", NL, cw.finish().getCodeStr());
+	}
+
+	private static void printRegion(MethodNode mth, IRegion region, CodeWriter cw, String indent, boolean printInsns) {
+		printWithAttributes(cw, indent, region.toString(), region);
 		indent += "|  ";
 		for (IContainer container : region.getSubBlocks()) {
 			if (container instanceof IRegion) {
-				printRegion(mth, (IRegion) container, indent, printInsns);
+				printRegion(mth, (IRegion) container, cw, indent, printInsns);
 			} else {
-				LOG.debug("{}{} {}", indent, container, container.getAttributesString());
+				printWithAttributes(cw, indent, container.toString(), container);
 				if (printInsns && container instanceof IBlock) {
 					IBlock block = (IBlock) container;
-					printInsns(mth, indent, block);
+					printInsns(mth, cw, indent, block);
 				}
 			}
 		}
 	}
 
-	private static void printInsns(MethodNode mth, String indent, IBlock block) {
+	private static void printInsns(MethodNode mth, CodeWriter cw, String indent, IBlock block) {
 		for (InsnNode insn : block.getInstructions()) {
 			try {
 				MethodGen mg = MethodGen.getFallbackMethodGen(mth);
 				InsnGen ig = new InsnGen(mg, true);
 				CodeWriter code = new CodeWriter();
 				ig.makeInsn(insn, code);
-				String insnStr = code.toString().substring(CodeWriter.NL.length());
-				LOG.debug("{}|> {}\t{}", indent, insnStr, insn.getAttributesString());
+				String codeStr = code.finish().getCodeStr();
+
+				List<String> insnStrings = Stream.of(codeStr.split(NL))
+						.filter(StringUtils::notBlank)
+						.map(s -> "|> " + s)
+						.collect(Collectors.toList());
+				Iterator<String> it = insnStrings.iterator();
+				while (true) {
+					String insnStr = it.next();
+					if (it.hasNext()) {
+						cw.startLine(indent).add(insnStr);
+					} else {
+						printWithAttributes(cw, indent, insnStr, insn);
+						break;
+					}
+				}
 			} catch (CodegenException e) {
-				LOG.debug("{}|>!! {}", indent, insn);
+				cw.startLine(indent).add(">!! ").add(insn.toString());
 			}
 		}
 	}
 
-	public static void checkSSA(MethodNode mth) {
-		for (BlockNode block : mth.getBasicBlocks()) {
-			for (InsnNode insn : block.getInstructions()) {
-				if (insn.getResult() != null) {
-					checkSSAVar(mth, insn, insn.getResult());
-				}
-				for (InsnArg arg : insn.getArguments()) {
-					if (arg instanceof RegisterArg) {
-						checkSSAVar(mth, insn, (RegisterArg) arg);
-					}
-				}
-			}
+	private static void printWithAttributes(CodeWriter cw, String indent, String codeStr, IAttributeNode attrNode) {
+		String str = attrNode.isAttrStorageEmpty() ? codeStr : codeStr + ' ' + attrNode.getAttributesString();
+		List<String> attrStrings = Stream.of(str.split(NL))
+				.filter(StringUtils::notBlank)
+				.collect(Collectors.toList());
+		Iterator<String> it = attrStrings.iterator();
+		if (!it.hasNext()) {
+			return;
 		}
-		checkPHI(mth);
-	}
-
-	private static void checkSSAVar(MethodNode mth, InsnNode insn, RegisterArg reg) {
-		SSAVar sVar = reg.getSVar();
-		if (sVar == null) {
-			throw new JadxRuntimeException("Null SSA var in " + insn + ", mth: " + mth);
-		}
-		for (RegisterArg useArg : sVar.getUseList()) {
-			InsnNode parentInsn = useArg.getParentInsn();
-			if (parentInsn != null && !parentInsn.containsArg(useArg)) {
-				throw new JadxRuntimeException("Incorrect use info in PHI insn");
-			}
+		cw.startLine(indent).add(it.next());
+		while (it.hasNext()) {
+			cw.startLine(indent).add("|+  ").add(it.next());
 		}
 	}
 
-	private static void checkPHI(MethodNode mth) {
-		for (BlockNode block : mth.getBasicBlocks()) {
-			List<PhiInsn> phis = new ArrayList<>();
-			for (InsnNode insn : block.getInstructions()) {
-				if (insn.getType() == InsnType.PHI) {
-					PhiInsn phi = (PhiInsn) insn;
-					phis.add(phi);
-					if (phi.getArgsCount() != phi.getBlockBinds().size()) {
-						throw new JadxRuntimeException("Incorrect args and binds in PHI");
-					}
-					if (phi.getArgsCount() == 0) {
-						throw new JadxRuntimeException("No args and binds in PHI");
-					}
-					for (InsnArg arg : insn.getArguments()) {
-						if (arg instanceof RegisterArg) {
-							BlockNode b = phi.getBlockByArg((RegisterArg) arg);
-							if (b == null) {
-								throw new JadxRuntimeException("Predecessor block not found");
-							}
-						} else {
-							throw new JadxRuntimeException("Not register in phi insn");
-						}
-					}
-				}
-			}
-			PhiListAttr phiListAttr = block.get(AType.PHI_LIST);
-			if (phiListAttr == null) {
-				if (!phis.isEmpty()) {
-					throw new JadxRuntimeException("Missing PHI list attribute");
-				}
-			} else {
-				List<PhiInsn> phiList = phiListAttr.getList();
-				if (phiList.isEmpty()) {
-					throw new JadxRuntimeException("Empty PHI list attribute");
-				}
-				if (!phis.containsAll(phiList) || !phiList.containsAll(phis)) {
-					throw new JadxRuntimeException("Instructions not match");
-				}
-			}
-		}
-		for (SSAVar ssaVar : mth.getSVars()) {
-			PhiInsn usedInPhi = ssaVar.getUsedInPhi();
-			if (usedInPhi != null) {
-				boolean found = false;
-				for (RegisterArg useArg : ssaVar.getUseList()) {
-					InsnNode parentInsn = useArg.getParentInsn();
-					if (parentInsn != null && parentInsn == usedInPhi) {
-						found = true;
-					}
-				}
-				if (!found) {
-					throw new JadxRuntimeException("Used in phi incorrect");
-				}
-			}
-		}
-	}
-
-	public static void printMap(String desc, Map<?, ?> map) {
-		LOG.debug("Map of {}, size: {}", desc, map.size());
+	public static void printMap(Map<?, ?> map, String desc) {
+		LOG.debug("Map {} (size = {}):", desc, map.size());
 		for (Map.Entry<?, ?> entry : map.entrySet()) {
-			LOG.debug("  {} : {}", entry.getKey(), entry.getValue());
+			LOG.debug("  {}: {}", entry.getKey(), entry.getValue());
 		}
 	}
 }

@@ -2,7 +2,6 @@ package jadx.core.dex.visitors.ssa;
 
 import java.util.Arrays;
 
-import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.instructions.args.RegisterArg;
 import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.BlockNode;
@@ -21,9 +20,12 @@ final class RenameState {
 				mth.getEnterBlock(),
 				new SSAVar[regsCount],
 				new int[regsCount]);
-		for (RegisterArg arg : mth.getArguments(true)) {
-			SSAVar ssaVar = state.startVar(arg);
-			ssaVar.add(AFlag.METHOD_ARGUMENT);
+		RegisterArg thisArg = mth.getThisArg();
+		if (thisArg != null) {
+			state.startVar(thisArg);
+		}
+		for (RegisterArg arg : mth.getArgRegs()) {
+			state.startVar(arg);
 		}
 		return state;
 	}

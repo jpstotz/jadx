@@ -3,7 +3,11 @@ package jadx.core.utils;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.stream.Collectors;
 
+import org.jetbrains.annotations.Nullable;
+
+import jadx.core.Consts;
 import jadx.core.dex.attributes.AFlag;
 import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.instructions.PhiInsn;
@@ -14,6 +18,9 @@ import jadx.core.dex.instructions.args.SSAVar;
 import jadx.core.dex.nodes.BlockNode;
 import jadx.core.dex.nodes.InsnNode;
 import jadx.core.dex.nodes.MethodNode;
+import jadx.core.utils.exceptions.JadxRuntimeException;
+
+import static jadx.core.codegen.CodeWriter.NL;
 
 /**
  * Helper class for correct instructions removing,
@@ -23,6 +30,7 @@ public class InsnRemover {
 
 	private final MethodNode mth;
 	private final List<InsnNode> toRemove;
+	@Nullable
 	private List<InsnNode> instrList;
 
 	public InsnRemover(MethodNode mth) {
@@ -54,49 +62,88 @@ public class InsnRemover {
 		if (toRemove.isEmpty()) {
 			return;
 		}
-		removeAll(instrList, toRemove);
+		if (instrList == null) {
+			for (InsnNode remInsn : toRemove) {
+				remove(mth, remInsn);
+			}
+		} else {
+			unbindInsns(mth, toRemove);
+			removeAll(instrList, toRemove);
+		}
 		toRemove.clear();
 	}
 
-	public static void unbindInsn(MethodNode mth, InsnNode insn) {
+	public static void unbindInsn(@Nullable MethodNode mth, InsnNode insn) {
+		unbindAllArgs(mth, insn);
+		unbindResult(mth, insn);
+		insn.add(AFlag.DONT_GENERATE);
+	}
+
+	public static void unbindInsns(@Nullable MethodNode mth, List<InsnNode> insns) {
+		for (InsnNode insn : insns) {
+			unbindInsn(mth, insn);
+		}
+	}
+
+	public static void unbindAllArgs(@Nullable MethodNode mth, InsnNode insn) {
 		for (InsnArg arg : insn.getArguments()) {
 			unbindArgUsage(mth, arg);
 		}
 		if (insn.getType() == InsnType.PHI) {
 			for (InsnArg arg : insn.getArguments()) {
 				if (arg instanceof RegisterArg) {
-					fixUsedInPhiFlag((RegisterArg) arg);
+					((RegisterArg) arg).getSVar().updateUsedInPhiList();
 				}
 			}
 		}
-		unbindResult(mth, insn);
 		insn.add(AFlag.REMOVE);
+		insn.add(AFlag.DONT_GENERATE);
 	}
 
-	public static void fixUsedInPhiFlag(RegisterArg useReg) {
-		PhiInsn usedIn = null;
-		for (RegisterArg reg : useReg.getSVar().getUseList()) {
-			InsnNode parentInsn = reg.getParentInsn();
-			if (parentInsn != null
-					&& parentInsn.getType() == InsnType.PHI
-					&& parentInsn.containsArg(useReg)) {
-				usedIn = (PhiInsn) parentInsn;
-			}
-		}
-		useReg.getSVar().setUsedInPhi(usedIn);
-	}
-
-	public static void unbindResult(MethodNode mth, InsnNode insn) {
+	public static void unbindResult(@Nullable MethodNode mth, InsnNode insn) {
 		RegisterArg r = insn.getResult();
-		if (r != null && r.getSVar() != null && mth != null) {
+		if (r != null && mth != null) {
 			SSAVar ssaVar = r.getSVar();
-			if (ssaVar.getUseCount() == 0) {
-				mth.removeSVar(ssaVar);
+			if (ssaVar != null && ssaVar.getAssign() == insn.getResult()) {
+				removeSsaVar(mth, ssaVar);
 			}
 		}
 	}
 
-	public static void unbindArgUsage(MethodNode mth, InsnArg arg) {
+	private static void removeSsaVar(MethodNode mth, SSAVar ssaVar) {
+		int useCount = ssaVar.getUseCount();
+		if (useCount == 0) {
+			mth.removeSVar(ssaVar);
+			return;
+		}
+		// check if all usage only in PHI insns
+		boolean allPhis = true;
+		for (RegisterArg arg : ssaVar.getUseList()) {
+			InsnNode parentInsn = arg.getParentInsn();
+			if (parentInsn == null || parentInsn.getType() != InsnType.PHI) {
+				allPhis = false;
+				break;
+			}
+		}
+		if (allPhis) {
+			for (RegisterArg arg : new ArrayList<>(ssaVar.getUseList())) {
+				InsnNode parentInsn = arg.getParentInsn();
+				if (parentInsn != null) {
+					((PhiInsn) parentInsn).removeArg(arg);
+				}
+			}
+			mth.removeSVar(ssaVar);
+			return;
+		}
+		if (Consts.DEBUG) { // TODO: enable this
+			throw new JadxRuntimeException("Can't remove SSA var, still in use, count: " + useCount + ", list:"
+					+ NL + "  " + ssaVar.getUseList().stream()
+							.map(arg -> arg + " from " + arg.getParentInsn())
+							.collect(Collectors.joining(NL + "  ")));
+		}
+	}
+
+	public static void unbindArgUsage(@Nullable MethodNode mth, InsnArg arg) {
 		if (arg instanceof RegisterArg) {
 			RegisterArg reg = (RegisterArg) arg;
 			SSAVar sVar = reg.getSVar();
@@ -117,40 +164,78 @@ public class InsnRemover {
 		}
 		for (InsnNode rem : toRemove) {
 			int insnsCount = insns.size();
+			boolean found = false;
 			for (int i = 0; i < insnsCount; i++) {
 				if (insns.get(i) == rem) {
 					insns.remove(i);
+					found = true;
 					break;
 				}
+			}
+			if (!found && Consts.DEBUG) { // TODO: enable this
+				throw new JadxRuntimeException("Can't remove insn:"
+						+ NL + "  " + rem
+						+ NL + " not found in list:"
+						+ NL + "  " + Utils.listToString(insns, NL + "  "));
 			}
 		}
 	}
 
 	public static void remove(MethodNode mth, InsnNode insn) {
+		if (insn.contains(AFlag.WRAPPED)) {
+			unbindInsn(mth, insn);
+			return;
+		}
 		BlockNode block = BlockUtils.getBlockByInsn(mth, insn);
 		if (block != null) {
 			remove(mth, block, insn);
+		} else {
+			insn.add(AFlag.DONT_GENERATE);
+			mth.addWarnComment("Not found block with instruction: " + insn);
 		}
 	}
 
 	public static void remove(MethodNode mth, BlockNode block, InsnNode insn) {
 		unbindInsn(mth, insn);
+		removeWithoutUnbind(mth, block, insn);
+	}
+
+	public static boolean removeWithoutUnbind(MethodNode mth, BlockNode block, InsnNode insn) {
 		// remove by pointer (don't use equals)
 		Iterator<InsnNode> it = block.getInstructions().iterator();
 		while (it.hasNext()) {
 			InsnNode ir = it.next();
 			if (ir == insn) {
 				it.remove();
-				return;
+				return true;
 			}
 		}
+		if (!insn.contains(AFlag.WRAPPED)) {
+			mth.addWarnComment("Failed to remove instruction: " + insn + " from block: " + block);
+		}
+		return false;
 	}
 
 	public static void removeAllAndUnbind(MethodNode mth, BlockNode block, List<InsnNode> insns) {
-		for (InsnNode insn : insns) {
-			unbindInsn(mth, insn);
-		}
+		unbindInsns(mth, insns);
 		removeAll(block.getInstructions(), insns);
+	}
+
+	public static void removeAllWithoutUnbind(BlockNode block, List<InsnNode> insns) {
+		removeAll(block.getInstructions(), insns);
+	}
+
+	public static void removeAllMarked(MethodNode mth) {
+		InsnRemover insnRemover = new InsnRemover(mth);
+		for (BlockNode blockNode : mth.getBasicBlocks()) {
+			for (InsnNode insn : blockNode.getInstructions()) {
+				if (insn.contains(AFlag.REMOVE)) {
+					insnRemover.addWithoutUnbind(insn);
+				}
+			}
+			insnRemover.setBlock(blockNode);
+			insnRemover.perform();
+		}
 	}
 
 	public static void remove(MethodNode mth, BlockNode block, int index) {

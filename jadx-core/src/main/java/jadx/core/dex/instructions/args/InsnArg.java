@@ -1,8 +1,6 @@
 package jadx.core.dex.instructions.args;
 
-import java.util.ArrayList;
-import java.util.List;
-
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,8 +8,12 @@ import org.slf4j.LoggerFactory;
 import com.android.dx.io.instructions.DecodedInstruction;
 
 import jadx.core.dex.attributes.AFlag;
+import jadx.core.dex.instructions.InsnType;
 import jadx.core.dex.nodes.InsnNode;
+import jadx.core.dex.nodes.MethodNode;
+import jadx.core.utils.InsnRemover;
 import jadx.core.utils.InsnUtils;
+import jadx.core.utils.exceptions.JadxRuntimeException;
 
 /**
  * Instruction argument,
@@ -64,6 +66,7 @@ public abstract class InsnArg extends Typed {
 	}
 
 	private static InsnWrapArg wrap(InsnNode insn) {
+		insn.add(AFlag.WRAPPED);
 		return new InsnWrapArg(insn);
 	}
 
@@ -83,10 +86,6 @@ public abstract class InsnArg extends Typed {
 		return false;
 	}
 
-	public boolean isField() {
-		return false;
-	}
-
 	@Nullable
 	public InsnNode getParentInsn() {
 		return parentInsn;
@@ -96,7 +95,13 @@ public abstract class InsnArg extends Typed {
 		this.parentInsn = parentInsn;
 	}
 
-	public InsnArg wrapInstruction(InsnNode insn) {
+	@Nullable("if wrap failed")
+	public InsnArg wrapInstruction(MethodNode mth, InsnNode insn) {
+		return wrapInstruction(mth, insn, true);
+	}
+
+	@Nullable("if wrap failed")
+	public InsnArg wrapInstruction(MethodNode mth, InsnNode insn, boolean unbind) {
 		InsnNode parent = parentInsn;
 		if (parent == null) {
 			return null;
@@ -109,18 +114,33 @@ public abstract class InsnArg extends Typed {
 		if (i == -1) {
 			return null;
 		}
-		insn.add(AFlag.WRAPPED);
-		InsnArg arg = wrapArg(insn);
-		parent.setArg(i, arg);
-		return arg;
-	}
-
-	public static void updateParentInsn(InsnNode fromInsn, InsnNode toInsn) {
-		List<RegisterArg> args = new ArrayList<>();
-		fromInsn.getRegisterArgs(args);
-		for (RegisterArg reg : args) {
-			reg.setParentInsn(toInsn);
+		if (insn.getType() == InsnType.MOVE && this.isRegister()) {
+			// preserve variable name for move insn (needed in `for-each` loop for iteration variable)
+			String name = ((RegisterArg) this).getName();
+			if (name != null) {
+				InsnArg arg = insn.getArg(0);
+				if (arg.isRegister()) {
+					((RegisterArg) arg).setNameIfUnknown(name);
+				} else if (arg.isInsnWrap()) {
+					InsnNode wrapInsn = ((InsnWrapArg) arg).getWrapInsn();
+					RegisterArg registerArg = wrapInsn.getResult();
+					if (registerArg != null) {
+						registerArg.setNameIfUnknown(name);
+					}
+				}
+			}
 		}
+		InsnArg arg = wrapInsnIntoArg(insn);
+		InsnArg oldArg = parent.getArg(i);
+		parent.setArg(i, arg);
+		InsnRemover.unbindArgUsage(mth, oldArg);
+		if (unbind) {
+			InsnRemover.unbindArgUsage(mth, this);
+			// result not needed in wrapped insn
+			InsnRemover.unbindResult(mth, insn);
+			insn.setResult(null);
+		}
+		return arg;
 	}
 
 	private static int getArgIndex(InsnNode parent, InsnArg arg) {
@@ -133,23 +153,56 @@ public abstract class InsnArg extends Typed {
 		return -1;
 	}
 
+	@NotNull
+	public static InsnArg wrapInsnIntoArg(InsnNode insn) {
+		InsnType type = insn.getType();
+		if (type == InsnType.CONST || type == InsnType.MOVE) {
+			if (insn.contains(AFlag.FORCE_ASSIGN_INLINE)) {
+				RegisterArg resArg = insn.getResult();
+				InsnArg arg = wrap(insn);
+				if (resArg != null) {
+					arg.setType(resArg.getType());
+				}
+				return arg;
+			} else {
+				InsnArg arg = insn.getArg(0);
+				insn.add(AFlag.DONT_GENERATE);
+				return arg;
+			}
+		}
+		return wrapArg(insn);
+	}
+
+	/**
+	 * Prefer {@link InsnArg#wrapInsnIntoArg(InsnNode)}.
+	 * <p>
+	 * This method don't support MOVE and CONST insns!
+	 */
 	public static InsnArg wrapArg(InsnNode insn) {
-		InsnArg arg;
+		RegisterArg resArg = insn.getResult();
+		InsnArg arg = wrap(insn);
 		switch (insn.getType()) {
-			case MOVE:
 			case CONST:
-				arg = insn.getArg(0);
-				break;
+			case MOVE:
+				throw new JadxRuntimeException("Don't wrap MOVE or CONST insns: " + insn);
+
 			case CONST_STR:
-				arg = wrap(insn);
 				arg.setType(ArgType.STRING);
+				if (resArg != null) {
+					resArg.setType(ArgType.STRING);
+				}
 				break;
 			case CONST_CLASS:
-				arg = wrap(insn);
 				arg.setType(ArgType.CLASS);
+				if (resArg != null) {
+					resArg.setType(ArgType.CLASS);
+				}
 				break;
+
 			default:
-				arg = wrap(insn);
+				if (resArg != null) {
+					arg.setType(resArg.getType());
+				}
 				break;
 		}
 		return arg;
@@ -157,6 +210,12 @@ public abstract class InsnArg extends Typed {
 
 	public boolean isThis() {
 		return contains(AFlag.THIS);
+	}
+
+	protected final <T extends InsnArg> T copyCommonParams(T copy) {
+		copy.copyAttributesFrom(this);
+		copy.setParentInsn(parentInsn);
+		return copy;
 	}
 
 	public InsnArg duplicate() {

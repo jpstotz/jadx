@@ -17,8 +17,10 @@ import jadx.core.dex.visitors.JadxVisitor;
 import jadx.core.dex.visitors.blocksmaker.BlockSplitter;
 import jadx.core.dex.visitors.ssa.SSATransform;
 import jadx.core.utils.ErrorsCounter;
-import jadx.core.utils.exceptions.DecodeException;
+import jadx.core.utils.Utils;
 import jadx.core.utils.exceptions.JadxException;
+
+import static jadx.core.codegen.CodeWriter.NL;
 
 @JadxVisitor(
 		name = "Debug Info Parser",
@@ -40,11 +42,13 @@ public class DebugInfoParseVisitor extends AbstractVisitor {
 				processDebugInfo(mth, debugOffset);
 			}
 		} catch (Exception e) {
-			LOG.error("Error to parse debug info: {}", ErrorsCounter.formatMsg(mth, e.getMessage()), e);
+			mth.addComment("JADX WARNING: Error to parse debug info: "
+					+ ErrorsCounter.formatMsg(mth, e.getMessage())
+					+ NL + Utils.getStackTrace(e));
 		}
 	}
 
-	private void processDebugInfo(MethodNode mth, int debugOffset) throws DecodeException {
+	private void processDebugInfo(MethodNode mth, int debugOffset) {
 		InsnNode[] insnArr = mth.getInstructions();
 		DebugInfoParser debugInfoParser = new DebugInfoParser(mth, debugOffset, insnArr);
 		List<LocalVar> localVars = debugInfoParser.process();
@@ -66,7 +70,11 @@ public class DebugInfoParseVisitor extends AbstractVisitor {
 			RegDebugInfoAttr debugInfoAttr = new RegDebugInfoAttr(var);
 			if (start < 0) {
 				// attach to method arguments
-				for (RegisterArg arg : mth.getArguments(true)) {
+				RegisterArg thisArg = mth.getThisArg();
+				if (thisArg != null) {
+					attachDebugInfo(thisArg, var, debugInfoAttr);
+				}
+				for (RegisterArg arg : mth.getArgRegs()) {
 					attachDebugInfo(arg, var, debugInfoAttr);
 				}
 				start = 0;
@@ -103,8 +111,8 @@ public class DebugInfoParseVisitor extends AbstractVisitor {
 				int line = insn.getSourceLine();
 				if (line != 0) {
 					mth.setSourceLine(line - 1);
+					return;
 				}
-				return;
 			}
 		}
 	}
