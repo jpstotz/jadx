@@ -2,7 +2,9 @@ package jadx.core.xmlgen;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -171,16 +173,39 @@ public class ResTableParser extends CommonBinaryParser implements IResParser {
 					parseOverlayTypeChunk(chunkStart);
 					break;
 				case RES_TABLE_TYPE_OVERLAY_POLICY: // 0x0205
-					throw new IOException(
-							String.format("Encountered unsupported chunk type RES_TABLE_TYPE_OVERLAY_POLICY at offset 0x%x ", chunkStart));
+					parseUnknownChunk(type, chunkStart);
+					break;
 				case RES_TABLE_TYPE_STAGED_ALIAS: // 0x0206
-					throw new IOException(
-							String.format("Encountered unsupported chunk type TYPE_STAGED_ALIAS at offset 0x%x ", chunkStart));
+					parseUnknownChunk(type, chunkStart);
+					break;
 				default:
-					LOG.warn("Unknown chunk type {} encountered at offset {}", type, chunkStart);
+					parseUnknownChunk(type, chunkStart);
+					break;
 			}
 		}
 		return pkg;
+	}
+
+	private void parseUnknownChunk(int type, long chunkStart) throws IOException {
+		int headerSize = is.readInt16();
+		int chunkSize = is.readInt32();
+		LOG.warn("Skipping unknown chunk type {} at offset {}, size {}", type, chunkStart, chunkSize);
+		int dataLen = chunkSize - 8;
+		byte[] chunkData = new byte[chunkSize];
+		is.readFully(chunkData, 8, dataLen);
+		Thread t = Thread.currentThread();
+		Thread.UncaughtExceptionHandler ucExHandler = t.getUncaughtExceptionHandler();
+		if (ucExHandler != null) {
+			ByteBuffer buf = ByteBuffer.wrap(chunkData);
+			buf.putShort((short) (type & 0xFFFF));
+			buf.putShort((short) (headerSize & 0xFFFF));
+			buf.putInt(chunkSize);
+			String unknownChunkData = Base64.getEncoder().encodeToString(chunkData);
+			IOException ex = new IOException(
+					String.format("Encountered unsupported chunk of type 0x%x at offset 0x%x size %d\n"
+							+ "Chunk data: %s", type, chunkStart, chunkSize, unknownChunkData));
+			ucExHandler.uncaughtException(t, ex);
+		}
 	}
 
 	private void deobfKeyStrings(String[] keyStrings) {
