@@ -6,6 +6,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
+import jadx.core.utils.exceptions.JadxRuntimeException;
+
 public class BinaryXMLStrings {
 	private final int stringCount;
 
@@ -40,7 +42,13 @@ public class BinaryXMLStrings {
 			return cached;
 		}
 
-		long offset = stringsStart + buffer.getInt(id * 4);
+		long offset;
+		try {
+			offset = stringsStart + buffer.getInt(id * 4);
+		} catch (IndexOutOfBoundsException e) {
+			// Can happen in heavily obfuscated XML files
+			throw new JadxRuntimeException("Failed to retrieve string with id=" + id + " - " + e.toString());
+		}
 		String extracted;
 		if (isUtf8) {
 			extracted = extractString8(this.buffer.array(), (int) offset);
