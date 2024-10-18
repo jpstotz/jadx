@@ -165,7 +165,7 @@ public class TabsController {
 		TabBlueprint blueprint = getTabByNode(node);
 
 		if (blueprint == null) {
-			return;
+			//return;
 		}
 
 		if (forceClose) {
