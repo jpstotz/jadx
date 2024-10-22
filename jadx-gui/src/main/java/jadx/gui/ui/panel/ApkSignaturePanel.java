@@ -2,28 +2,39 @@ package jadx.gui.ui.panel;
 
 import java.awt.BorderLayout;
 import java.awt.Dimension;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
+import java.util.Base64;
 import java.util.List;
 import java.util.stream.Collectors;
 
-import javax.swing.JEditorPane;
-import javax.swing.JScrollPane;
-import javax.swing.JSplitPane;
-import javax.swing.JTree;
+import javax.swing.*;
+import javax.swing.event.TreeExpansionEvent;
 import javax.swing.event.TreeSelectionEvent;
 import javax.swing.event.TreeSelectionListener;
+import javax.swing.event.TreeWillExpandListener;
 import javax.swing.tree.DefaultMutableTreeNode;
+import javax.swing.tree.ExpandVetoException;
+import javax.swing.tree.TreePath;
 
-import com.android.apksig.ApkVerifier.IssueWithParams;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.commons.text.StringEscapeUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.android.apksig.ApkVerifier;
+import com.android.apksig.ApkVerifier.IssueWithParams;
 
 import jadx.gui.treemodel.ApkSignature;
+import jadx.gui.ui.filedialog.FileDialogWrapper;
+import jadx.gui.ui.filedialog.FileOpenMode;
 import jadx.gui.ui.tab.TabbedPane;
 import jadx.gui.utils.CertificateManager;
 import jadx.gui.utils.NLS;
@@ -44,6 +55,25 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 		textArea.setContentType("text/html");
 		tree.setMinimumSize(new Dimension(100, 100));
 		tree.addTreeSelectionListener(this);
+		tree.addMouseListener(new MouseAdapter() {
+			@Override
+			public void mouseClicked(MouseEvent event) {
+				if (event.getButton() == MouseEvent.BUTTON3) {
+					showContextMenu(event);
+				}
+			}
+		});
+		tree.addTreeWillExpandListener(new TreeWillExpandListener() {
+			@Override
+			public void treeWillExpand(TreeExpansionEvent event) throws ExpandVetoException {
+
+			}
+
+			@Override
+			public void treeWillCollapse(TreeExpansionEvent event) throws ExpandVetoException {
+				throw new ExpandVetoException(event, "");
+			}
+		});
 
 		JScrollPane scrollPaneTree = new JScrollPane(tree);
 		JScrollPane scrollPaneTextArea = new JScrollPane(textArea);
@@ -70,12 +100,71 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 
 		processV1Signatures(result);
 		processV2Signatures(result);
-		processV3Signatures(result);
+		processV3Signatures(result, true);
+		processV3Signatures(result, false);
 
 		processIssuesNode(root, result.getErrors(), "All Errors");
 		processIssuesNode(root, result.getWarnings(), "All Warnings");
 
 		expandAllNodes(tree, 0, tree.getRowCount());
+	}
+
+	private void showContextMenu(MouseEvent event) {
+		TreePath path = tree.getPathForLocation(event.getPoint().x, event.getPoint().y);
+		if (path == null) {
+			return;
+		}
+		ApkSigNode node = (ApkSigNode) path.getLastPathComponent();
+		Object userObj = node.getUserObject();
+		if (userObj instanceof Certificate) {
+			Certificate cert = (Certificate) userObj;
+			JPopupMenu menu = new JPopupMenu();
+			JMenuItem saveCert = new JMenuItem("Save Certificate");
+			saveCert.addActionListener((e) -> saveCertificate(cert));
+			menu.add(saveCert);
+			JMenuItem saveKey = new JMenuItem("Save Public Key");
+			saveKey.addActionListener((e) -> savePublicKey(cert));
+			menu.add(saveKey);
+			menu.show(event.getComponent(), event.getX(), event.getY());
+		}
+	}
+
+	private void saveCertificate(Certificate cert) {
+		try {
+			byte[] data = cert.getEncoded();
+			FileDialogWrapper fileDialog = new FileDialogWrapper(tabbedPane.getMainWindow(), FileOpenMode.CUSTOM_SAVE);
+			fileDialog.setFileExtList(List.of("cer"));
+			fileDialog.setSelectionMode(JFileChooser.FILES_ONLY);
+			List<Path> result = fileDialog.show();
+			if (result.isEmpty()) {
+				return;
+			}
+			Path savePath = result.get(0);
+			Files.write(savePath, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+		} catch (CertificateEncodingException e) {
+			throw new RuntimeException(e);
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to write certificate: " + e.getMessage(), e);
+		}
+	}
+
+	private void savePublicKey(Certificate cert) {
+		byte[] data = cert.getPublicKey().getEncoded();
+		String pemData = "-----BEGIN PUBLIC KEY-----\r\n" + Base64.getMimeEncoder().encodeToString(data) + "\r\n-----END PUBLIC KEY-----";
+		try {
+			FileDialogWrapper fileDialog = new FileDialogWrapper(tabbedPane.getMainWindow(), FileOpenMode.CUSTOM_SAVE);
+			fileDialog.setFileExtList(List.of("pem"));
+			fileDialog.setSelectionMode(JFileChooser.FILES_ONLY);
+			List<Path> result = fileDialog.show();
+			if (result.isEmpty()) {
+				return;
+			}
+			Path savePath = result.get(0);
+			Files.writeString(savePath, pemData, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+		} catch (IOException e) {
+			throw new RuntimeException("Failed to write certificate: " + e.getMessage(), e);
+		}
+
 	}
 
 	private void processV1Signatures(ApkVerifier.Result result) {
@@ -86,9 +175,10 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 		}
 		ApkSigNode sigSchemeNode = new ApkSigNode("Signature Scheme v1", v1Signer);
 		root.add(sigSchemeNode);
+		sigSchemeNode.add(new ApkSigNode("Verified using v1 scheme: " + result.isVerifiedUsingV1Scheme()));
 		int i = 1;
 		for (ApkVerifier.Result.V1SchemeSignerInfo signerInfo : v1Signer) {
-			ApkSigNode signerNode = new ApkSigNode(String.format("Signer %d", i++));
+			ApkSigNode signerNode = new ApkSigNode(String.format("Signer %d: %s", i++, signerInfo.getName()));
 			signerNode.setUserObject(signerInfo);
 			sigSchemeNode.add(signerNode);
 			processCertificate(signerNode, signerInfo.getCertificate());
@@ -100,13 +190,16 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 			ApkSigNode ignoredNode = new ApkSigNode("Ignored Signers");
 			ignoredNode.setUserObject(v1Ignored);
 
+			int j = 1;
 			for (ApkVerifier.Result.V1SchemeSignerInfo signerInfo : v1Ignored) {
-				processCertificate(ignoredNode, signerInfo.getCertificate());
-				processIssuesNode(ignoredNode, signerInfo.getErrors(), "Errors");
-				processIssuesNode(ignoredNode, signerInfo.getWarnings(), "Warnings");
+				ApkSigNode signerNode = new ApkSigNode(String.format("Ignored Signer %d: %s", j++, signerInfo.getName()));
+				signerNode.setUserObject(signerInfo);
+				sigSchemeNode.add(signerNode);
+				processCertificate(signerNode, signerInfo.getCertificate());
+				processIssuesNode(signerNode, signerInfo.getErrors(), "Errors");
+				processIssuesNode(signerNode, signerInfo.getWarnings(), "Warnings");
 			}
 		}
-
 	}
 
 	private void processV2Signatures(ApkVerifier.Result result) {
@@ -116,6 +209,7 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 		}
 		ApkSigNode sigSchemeNode = new ApkSigNode("Signature Scheme v2", v2Signer);
 		root.add(sigSchemeNode);
+		sigSchemeNode.add(new ApkSigNode("Verified using v2 scheme: " + result.isVerifiedUsingV1Scheme()));
 		int i = 1;
 		for (ApkVerifier.Result.V2SchemeSignerInfo signerInfo : v2Signer) {
 			ApkSigNode signerNode = new ApkSigNode(String.format("Signer %d", i++));
@@ -128,13 +222,15 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 		}
 	}
 
-	private void processV3Signatures(ApkVerifier.Result result) {
-		List<ApkVerifier.Result.V3SchemeSignerInfo> v3Signer = result.getV3SchemeSigners();
+	private void processV3Signatures(ApkVerifier.Result result, boolean use30) {
+		String schemeVersion = use30 ? "3" : "3.1";
+		List<ApkVerifier.Result.V3SchemeSignerInfo> v3Signer = use30 ? result.getV3SchemeSigners() : result.getV31SchemeSigners();
 		if (v3Signer.isEmpty()) {
 			return;
 		}
-		ApkSigNode sigSchemeNode = new ApkSigNode("Signature Scheme v3", v3Signer);
+		ApkSigNode sigSchemeNode = new ApkSigNode(String.format("Signature Scheme v%s", schemeVersion), v3Signer);
 		root.add(sigSchemeNode);
+		sigSchemeNode.add(new ApkSigNode(String.format("Verified using v%s scheme: ", schemeVersion) + result.isVerifiedUsingV2Scheme()));
 		int i = 1;
 		for (ApkVerifier.Result.V3SchemeSignerInfo signerInfo : v3Signer) {
 			ApkSigNode signerNode = new ApkSigNode(String.format("Signer %d", i++));
@@ -145,7 +241,6 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 			processIssuesNode(signerNode, signerInfo.getErrors(), "Errors");
 			processIssuesNode(signerNode, signerInfo.getWarnings(), "Warnings");
 		}
-
 	}
 
 	private void processIssuesNode(ApkSigNode parentNode, List<ApkVerifier.IssueWithParams> issueList, String issueType) {
@@ -279,7 +374,7 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 
 		if (!result.getV1SchemeSigners().isEmpty()) {
 			builder.append("<h2>");
-			builder.escape(NLS.str(result.isVerifiedUsingV1Scheme() ? sigSuccKey : sigFailKey, 1));
+			builder.escape(NLS.str(result.isVerifiedUsingV1Scheme() ? sigSuccKey : sigFailKey, "1"));
 			builder.append("</h2>\n");
 
 			builder.append("<blockquote>");
@@ -300,7 +395,7 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 		}
 		if (!result.getV2SchemeSigners().isEmpty()) {
 			builder.append("<h2>");
-			builder.escape(NLS.str(result.isVerifiedUsingV2Scheme() ? sigSuccKey : sigFailKey, 2));
+			builder.escape(NLS.str(result.isVerifiedUsingV2Scheme() ? sigSuccKey : sigFailKey, "2"));
 			builder.append("</h2>\n");
 
 			builder.append("<blockquote>");
@@ -318,11 +413,29 @@ public class ApkSignaturePanel extends ContentPanel implements TreeSelectionList
 		}
 		if (!result.getV3SchemeSigners().isEmpty()) {
 			builder.append("<h2>");
-			builder.escape(NLS.str(result.isVerifiedUsingV3Scheme() ? sigSuccKey : sigFailKey, 3));
+			builder.escape(NLS.str(result.isVerifiedUsingV3Scheme() ? sigSuccKey : sigFailKey, "3"));
 			builder.append("</h2>\n");
 
 			builder.append("<blockquote>");
 			for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV3SchemeSigners()) {
+				builder.append("<h3>");
+				builder.escape(NLS.str("apkSignature.signer"));
+				builder.append(" ");
+				builder.append(Integer.toString(signer.getIndex() + 1));
+				builder.append("</h3>");
+				writeCertificate(builder, signer.getCertificate());
+				writeIssues(builder, err, signer.getErrors());
+				writeIssues(builder, warn, signer.getWarnings());
+			}
+			builder.append("</blockquote>");
+		}
+		if (!result.getV31SchemeSigners().isEmpty()) {
+			builder.append("<h2>");
+			builder.escape(NLS.str(result.isVerifiedUsingV31Scheme() ? sigSuccKey : sigFailKey, "3.1"));
+			builder.append("</h2>\n");
+
+			builder.append("<blockquote>");
+			for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV31SchemeSigners()) {
 				builder.append("<h3>");
 				builder.escape(NLS.str("apkSignature.signer"));
 				builder.append(" ");
