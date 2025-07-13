@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -23,6 +24,8 @@ import org.slf4j.LoggerFactory;
 import jadx.core.utils.log.LogUtils;
 import jadx.gui.utils.IOUtils;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 public class ADB {
 	private static final Logger LOG = LoggerFactory.getLogger(ADB.class);
 
@@ -31,27 +34,27 @@ public class ADB {
 
 	private static final String CMD_FEATURES = "000dhost:features";
 	private static final String CMD_TRACK_DEVICES = "0014host:track-devices-l";
-	private static final byte[] OKAY = "OKAY".getBytes();
-	private static final byte[] FAIL = "FAIL".getBytes();
+	private static final byte[] OKAY = "OKAY".getBytes(UTF_8);
+	private static final byte[] FAIL = "FAIL".getBytes(UTF_8);
 
-	static boolean isOkay(InputStream stream) throws IOException {
+	static boolean isOkay(InputStream stream, String loggingText) throws IOException {
 		byte[] buf = IOUtils.readNBytes(stream, 4);
+		if (buf.length < 4) {
+			throw new IOException("isOkay failed - steam ended");
+		}
 		if (Arrays.equals(buf, OKAY)) {
 			return true;
 		}
 		if (Arrays.equals(buf, FAIL)) {
-			// Observed that after FAIL the length in hex follows and afterwards an error message,
+			// Observed that after FAIL the length in hex follows and afterward an error message,
 			// but it is unclear if this is true for all cases where isOkay is used.
 			// int msgLen = Integer.parseInt(new String(IOUtils.readNBytes(stream, 4)), 16);
 			// byte[] errorMsg = IOUtils.readNBytes(stream, msgLen);
 			// LOG.error("isOkay failed: received error message: {}", new String(errorMsg));
-			LOG.error("isOkay failed");
+			LOG.error("isOkay failed: {}", loggingText);
 			return false;
 		}
-		if (buf == null) {
-			throw new IOException("isOkay failed - steam ended");
-		}
-		throw new IOException("isOkay failed - unexpected response " + new String(buf));
+		throw new IOException("isOkay failed - unexpected response " + new String(buf, UTF_8));
 	}
 
 	public static byte[] exec(String cmd, OutputStream outputStream, InputStream inputStream) throws IOException {
@@ -69,17 +72,20 @@ public class ADB {
 	}
 
 	public static Socket connect(String host, int port) throws IOException {
+		LOG.trace("connect {}:{}", host, port);
 		return new Socket(host, port);
 	}
 
 	static boolean execCommandAsync(OutputStream outputStream, InputStream inputStream, String cmd) throws IOException {
-		outputStream.write(cmd.getBytes());
-		return isOkay(inputStream);
+		LOG.trace("execCommandAsync {}", cmd);
+		outputStream.write(cmd.getBytes(UTF_8));
+		return isOkay(inputStream, "execCommandAsync " + cmd);
 	}
 
 	private static byte[] execCommandSync(OutputStream outputStream, InputStream inputStream, String cmd) throws IOException {
-		outputStream.write(cmd.getBytes());
-		if (isOkay(inputStream)) {
+		LOG.trace("execCommandSync {}", cmd);
+		outputStream.write(cmd.getBytes(UTF_8));
+		if (isOkay(inputStream, "execCommandSync " + cmd)) {
 			return readServiceProtocol(inputStream);
 		}
 		return null;
@@ -113,8 +119,9 @@ public class ADB {
 	static boolean setSerial(String serial, OutputStream outputStream, InputStream inputStream) throws IOException {
 		String setSerialCmd = String.format("host:tport:serial:%s", serial);
 		setSerialCmd = String.format("%04x%s", setSerialCmd.length(), setSerialCmd);
-		outputStream.write(setSerialCmd.getBytes());
-		boolean ok = isOkay(inputStream);
+		outputStream.write(setSerialCmd.getBytes(UTF_8));
+		LOG.trace("setSerial {}", setSerialCmd);
+		boolean ok = isOkay(inputStream, "setSerial");
 		if (ok) {
 			// skip the shell-state-id returned by ADB server, it's not important for the following actions.
 			IOUtils.readNBytes(inputStream, 8);
@@ -125,10 +132,11 @@ public class ADB {
 	}
 
 	private static byte[] execShellCommandRaw(String cmd, OutputStream outputStream, InputStream inputStream) throws IOException {
+		LOG.trace("execShellCommandRaw {}", cmd);
 		cmd = String.format("shell,v2,TERM=xterm-256color,raw:%s", cmd);
 		cmd = String.format("%04x%s", cmd.length(), cmd);
-		outputStream.write(cmd.getBytes());
-		if (isOkay(inputStream)) {
+		outputStream.write(cmd.getBytes(UTF_8));
+		if (isOkay(inputStream, "execShellCommandRaw " + cmd)) {
 			return ShellProtocol.readStdout(inputStream);
 		}
 		return null;
@@ -144,7 +152,7 @@ public class ADB {
 	public static List<String> getFeatures() throws IOException {
 		byte[] rst = exec(CMD_FEATURES);
 		if (rst != null) {
-			return Arrays.asList(new String(rst).trim().split(","));
+			return Arrays.asList(new String(rst, UTF_8).trim().split(","));
 		}
 		return Collections.emptyList();
 	}
@@ -158,21 +166,25 @@ public class ADB {
 		try {
 			// Wait for the adb server to start. On Windows even on a fast system 6 seconds are not unusual.
 			proc.waitFor(10, TimeUnit.SECONDS);
-			proc.exitValue();
+			if (proc.isAlive()) {
+				// This usually happens if the specified port is in use by a different program
+				throw new TimeoutException(
+						"adb start-server command failed to finish in 10 seconds: TCP port " + port + " already in use?");
+			}
+			if (proc.exitValue() != 0) {
+				throw new RuntimeException("adb start-server command failed: exit code is not zero: " + proc.exitValue());
+			}
 		} catch (Exception e) {
-			LOG.error("ADB start server failed with command: {}", String.join(" ", command), e);
 			proc.destroyForcibly();
+			String out = new String(proc.getInputStream().readAllBytes(), UTF_8).trim();
+			if (!out.isEmpty()) {
+				out = "\n" + out;
+			}
+			LOG.error("ADB start server failed with command: {}{}", String.join(" ", command), out, e);
 			return false;
 		}
-		ByteArrayOutputStream out = new ByteArrayOutputStream();
-		try (InputStream in = proc.getInputStream()) {
-			int read;
-			byte[] buf = new byte[1024];
-			while ((read = in.read(buf)) >= 0) {
-				out.write(buf, 0, read);
-			}
-		}
-		return out.toString().contains(tcpPort);
+		String out = new String(proc.getInputStream().readAllBytes(), UTF_8);
+		return out.contains(tcpPort);
 	}
 
 	public static boolean isServerRunning(String host, int port) {
@@ -202,7 +214,7 @@ public class ADB {
 					break; // socket disconnected
 				}
 				if (listener != null) {
-					String payload = new String(res);
+					String payload = new String(res, UTF_8);
 					String[] deviceLines = payload.split("\n");
 					List<ADBDeviceInfo> deviceInfoList = new ArrayList<>(deviceLines.length);
 					for (String deviceLine : deviceLines) {
@@ -225,11 +237,11 @@ public class ADB {
 			String cmd = "0011host:list-forward";
 			InputStream inputStream = socket.getInputStream();
 			OutputStream outputStream = socket.getOutputStream();
-			outputStream.write(cmd.getBytes());
-			if (isOkay(inputStream)) {
+			outputStream.write(cmd.getBytes(UTF_8));
+			if (isOkay(inputStream, "listForward")) {
 				byte[] bytes = readServiceProtocol(inputStream);
 				if (bytes != null) {
-					String[] forwards = new String(bytes).split("\n");
+					String[] forwards = new String(bytes, UTF_8).split("\n");
 					return Stream.of(forwards).map(String::trim).collect(Collectors.toList());
 				}
 			}
@@ -238,6 +250,7 @@ public class ADB {
 	}
 
 	public static boolean removeForward(String host, int port, String serial, String localPort) throws IOException {
+		LOG.trace("removeForward {}:{} {} {}", host, port, serial, localPort);
 		try (Socket socket = connect(host, port)) {
 			String cmd = String.format("host:killforward:tcp:%s", localPort);
 			cmd = String.format("%04x%s", cmd.length(), cmd);
@@ -245,7 +258,7 @@ public class ADB {
 			OutputStream outputStream = socket.getOutputStream();
 			if (setSerial(serial, outputStream, inputStream)) {
 				outputStream.write(cmd.getBytes());
-				return isOkay(inputStream) && isOkay(inputStream);
+				return isOkay(inputStream, "killforward 1") && isOkay(inputStream, "killforward 2");
 			}
 		}
 		return false;
