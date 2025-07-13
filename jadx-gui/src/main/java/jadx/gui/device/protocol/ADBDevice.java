@@ -66,9 +66,9 @@ public class ADBDevice {
 			ForwardResult rst;
 			if (ADB.setSerial(info.getSerial(), outputStream, inputStream)) {
 				outputStream.write(cmd.getBytes());
-				if (!ADB.isOkay(inputStream)) {
+				if (!ADB.isOkay(inputStream, "forward 1")) {
 					rst = new ForwardResult(1, ADB.readServiceProtocol(inputStream));
-				} else if (!ADB.isOkay(inputStream)) {
+				} else if (!ADB.isOkay(inputStream, "forward 2")) {
 					rst = new ForwardResult(2, ADB.readServiceProtocol(inputStream));
 				} else {
 					rst = new ForwardResult(0, null);
