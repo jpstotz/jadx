@@ -247,7 +247,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 		throw new JadxRuntimeException("Unexpected type: " + type);
 	}
 
-	protected static RuntimeType castType(String type) {
+	private static RuntimeType castType(String type) {
 		RuntimeType rt = null;
 		if (!StringUtils.isEmpty(type)) {
 			rt = TYPE_MAP.get(type);
@@ -296,9 +296,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 						((RuntimeField) fldNode.getRuntimeValue()).getFieldID(),
 						fldNode.getRuntimeField().getType(),
 						value);
-				lazyQueue.execute(() -> {
-					updateField((FieldTreeNode) valNode);
-				});
+				lazyQueue.execute(() -> updateField((FieldTreeNode) valNode));
 			} catch (SmaliDebuggerException e) {
 				logErr(e);
 				return false;
@@ -412,7 +410,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 				reg.setAbsoluteType(false);
 			}
 		}
-		if (list.size() > 0) {
+		if (!list.isEmpty()) {
 			debuggerPanel.refreshRegisterTree();
 		}
 	}
@@ -424,11 +422,10 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 		}
 		if (valTreeNode instanceof FieldTreeNode) {
 			updateField((FieldTreeNode) valTreeNode);
-			return;
 		}
 	}
 
-	public void updateField(FieldTreeNode node) {
+	private void updateField(FieldTreeNode node) {
 		try {
 			setFieldsNotUpdated();
 			debugger.getValueSync(node.getObjectID(), node.getRuntimeField());
@@ -439,7 +436,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 		}
 	}
 
-	public boolean updateRegister(RegTreeNode regNode, RuntimeType type, boolean retry) {
+	private boolean updateRegister(RegTreeNode regNode, RuntimeType type, boolean retry) {
 		if (type == null) {
 			if (regNode.isAbsoluteType()) {
 				type = castType(regNode.getType());
@@ -627,7 +624,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 			}
 			debuggerPanel.updateThisFieldNodes(nodes);
 			frame.setFieldNodes(nodes);
-			if (thisID > 0 && nodes.size() > 0) {
+			if (thisID > 0 && !nodes.isEmpty()) {
 				lazyQueue.execute(() -> updateAllFieldValues(thisID, frame));
 			}
 		} catch (SmaliDebuggerException e) {
@@ -637,7 +634,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 
 	private void updateAllFieldValues(long thisID, FrameNode frame) {
 		List<FieldTreeNode> nodes = frame.getFieldNodes();
-		if (nodes.size() > 0) {
+		if (!nodes.isEmpty()) {
 			List<FieldTreeNode> flds = new ArrayList<>(nodes.size());
 			List<RuntimeField> rts = new ArrayList<>(nodes.size());
 			nodes.forEach(n -> {
@@ -649,7 +646,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 			});
 			try {
 				debugger.getAllFieldValuesSync(thisID, rts);
-				flds.forEach(n -> decodeRuntimeValue(n));
+				flds.forEach(this::decodeRuntimeValue);
 				debuggerPanel.refreshThisFieldTree();
 			} catch (SmaliDebuggerException e) {
 				logErr(e);
@@ -958,7 +955,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 	}
 
 	private void initBreakpoints(List<FileBreakpoint> fbps) {
-		if (fbps.size() == 0) {
+		if (fbps.isEmpty()) {
 			return;
 		}
 		boolean fetch = true;
@@ -980,7 +977,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 		}
 	}
 
-	protected boolean setBreakpoint(FileBreakpoint bp) {
+	boolean setBreakpoint(FileBreakpoint bp) {
 		if (!isDebugging()) {
 			return true;
 		}
@@ -1019,7 +1016,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 		}
 	}
 
-	protected void setBreakpoint(long cid, FileBreakpoint fbp) {
+	private void setBreakpoint(long cid, FileBreakpoint fbp) {
 		try {
 			long mid = debugger.getMethodID(cid, fbp.mth);
 			if (mid > -1) {
@@ -1042,7 +1039,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 		BreakpointManager.failBreakpoint(fbp);
 	}
 
-	protected boolean removeBreakpoint(FileBreakpoint fbp) {
+	boolean removeBreakpoint(FileBreakpoint fbp) {
 		if (!isDebugging()) {
 			return true;
 		}
@@ -1177,19 +1174,19 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 			return codeOffset == -1 ? frame.getCodeIndex() : codeOffset;
 		}
 
-		public void setRegNodes(List<RegTreeNode> regNodes) {
+		private void setRegNodes(List<RegTreeNode> regNodes) {
 			this.regNodes = regNodes;
 		}
 
-		public List<RegTreeNode> getRegNodes() {
+		private List<RegTreeNode> getRegNodes() {
 			return regNodes;
 		}
 
-		public List<FieldTreeNode> getFieldNodes() {
+		private List<FieldTreeNode> getFieldNodes() {
 			return thisNodes;
 		}
 
-		public void setFieldNodes(List<FieldTreeNode> thisNodes) {
+		private void setFieldNodes(List<FieldTreeNode> thisNodes) {
 			this.thisNodes = thisNodes;
 		}
 
@@ -1243,7 +1240,7 @@ public final class DebugController implements SmaliDebugger.SuspendListener, IDe
 	}
 
 	private static class ThreadBoxElement implements IListElement {
-		private long threadID;
+		private final long threadID;
 		private String name;
 
 		public ThreadBoxElement(long threadID) {
