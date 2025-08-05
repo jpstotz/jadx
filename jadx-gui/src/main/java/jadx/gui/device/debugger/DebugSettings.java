@@ -90,7 +90,9 @@ public class DebugSettings {
 					for (String field : fields) {
 						if (field.startsWith("tcp:")) {
 							try {
-								device.removeForward(field.substring("tcp:".length()));
+								if (!device.removeForward(field.substring("tcp:".length()))) {
+									LOG.warn("JDWP remove forward {} failed", tcpPort);
+								}
 							} catch (Exception e) {
 								LOG.error("JDWP remove forward error", e);
 							}

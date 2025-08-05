@@ -418,7 +418,9 @@ public class ADBDialog extends JDialog implements ADB.DeviceStateListener, ADB.J
 
 	private void listenJDWP(ADBDevice device) {
 		try {
-			device.listenForJDWP(this);
+			if (!device.listenForJDWP(this)) {
+				LOG.warn("Listen for JDWP failed");
+			}
 		} catch (Exception e) {
 			LOG.error("Failed listen for JDWP", e);
 		}
