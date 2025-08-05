@@ -282,8 +282,11 @@ public class LogcatPanel extends JPanel {
 		}
 
 		public void actionPerformed(ActionEvent e) {
-			JComboBox cb = (JComboBox) e.getSource();
+			JComboBox<CheckComboStore> cb = (JComboBox<CheckComboStore>) e.getSource();
 			CheckComboStore store = (CheckComboStore) cb.getSelectedItem();
+			if (store == null) {
+				return;
+			}
 			CheckComboRenderer ccr = (CheckComboRenderer) cb.getRenderer();
 			store.state = !store.state;
 			ccr.checkBox.setSelected(store.state);
@@ -350,11 +353,7 @@ public class LogcatPanel extends JPanel {
 		public void selectAllBut(int ind) {
 			for (int i = 0; i < combo.getItemCount(); i++) {
 				CheckComboStore ccs = combo.getItemAt(i);
-				if (i != ind) {
-					ccs.state = false;
-				} else {
-					ccs.state = true;
-				}
+				ccs.state = (i == ind);
 				switch (type) {
 					case 1: // process
 						logcatController.getFilter().togglePid(ccs.index, ccs.state);
