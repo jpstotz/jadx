@@ -483,7 +483,7 @@ public class JDebuggerPanel extends JPanel {
 	}
 
 	public void refreshStackFrameList(List<? extends IListElement> elements) {
-		if (elements.size() > 0) {
+		if (!elements.isEmpty()) {
 			DefaultListModel<IListElement> model =
 					(DefaultListModel<IListElement>) stackFrameList.getModel();
 			elements.forEach(model::addElement);

@@ -124,10 +124,10 @@ public class ADBDevice {
 	 * @return binary output of logcat
 	 */
 	public byte[] getBinaryLogcat() throws IOException {
-
-		Socket socket = ADB.connect(info.getAdbHost(), info.getAdbPort());
-		String cmd = "logcat -dB";
-		return ADB.execShellCommandRaw(info.getSerial(), cmd, socket.getOutputStream(), socket.getInputStream());
+		try (Socket socket = ADB.connect(info.getAdbHost(), info.getAdbPort())) {
+			String cmd = "logcat -dB";
+			return ADB.execShellCommandRaw(info.getSerial(), cmd, socket.getOutputStream(), socket.getInputStream());
+		}
 	}
 
 	/**
@@ -135,31 +135,39 @@ public class ADBDevice {
 	 *         Timestamp is in the format 09-08 02:18:03.131
 	 */
 	public byte[] getBinaryLogcat(String timestamp) throws IOException {
-		Socket socket = ADB.connect(info.getAdbHost(), info.getAdbPort());
-		Matcher matcher = TIMESTAMP_FORMAT.matcher(timestamp);
-		if (!matcher.find()) {
-			LOG.error("Invalid Logcat Timestamp " + timestamp);
+		try (Socket socket = ADB.connect(info.getAdbHost(), info.getAdbPort())) {
+			Matcher matcher = TIMESTAMP_FORMAT.matcher(timestamp);
+			if (!matcher.find()) {
+				LOG.error("Invalid Logcat Timestamp " + timestamp);
+			}
+			String cmd = "logcat -dB -t \"" + timestamp + "\"";
+			return ADB.execShellCommandRaw(info.getSerial(), cmd, socket.getOutputStream(), socket.getInputStream());
 		}
-		String cmd = "logcat -dB -t \"" + timestamp + "\"";
-		return ADB.execShellCommandRaw(info.getSerial(), cmd, socket.getOutputStream(), socket.getInputStream());
 	}
 
 	/**
 	 * Binary output of logcat -c
 	 */
 	public void clearLogcat() throws IOException {
-		Socket socket = ADB.connect(info.getAdbHost(), info.getAdbPort());
-		String cmd = "logcat -c";
-		ADB.execShellCommandRaw(info.getSerial(), cmd, socket.getOutputStream(), socket.getInputStream());
+		try (Socket socket = ADB.connect(info.getAdbHost(), info.getAdbPort())) {
+			String cmd = "logcat -c";
+			ADB.execShellCommandRaw(info.getSerial(), cmd, socket.getOutputStream(), socket.getInputStream());
+		}
 	}
 
 	/**
 	 * @return Timezone for the attached android device
 	 */
 	public String getTimezone() throws IOException {
-		Socket socket = ADB.connect(info.getAdbHost(), info.getAdbPort());
-		String cmd = "getprop persist.sys.timezone";
-		byte[] tz = ADB.execShellCommandRaw(info.getSerial(), cmd, socket.getOutputStream(), socket.getInputStream());
+		byte[] tz;
+		try (Socket socket = ADB.connect(info.getAdbHost(), info.getAdbPort())) {
+			String cmd = "getprop persist.sys.timezone";
+			tz = ADB.execShellCommandRaw(info.getSerial(), cmd, socket.getOutputStream(), socket.getInputStream());
+		}
+		if (tz == null) {
+			LOG.error("Failed to get time zone from persist.sys.timezone property");
+			return null;
+		}
 		return new String(tz).trim();
 	}
 
@@ -169,7 +177,7 @@ public class ADBDevice {
 		}
 		try {
 			List<String> list = getProp("ro.build.version.release");
-			if (list.size() != 0) {
+			if (!list.isEmpty()) {
 				androidReleaseVer = list.get(0);
 			}
 		} catch (Exception e) {
